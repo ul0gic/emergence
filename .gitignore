@@ -1,0 +1,49 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node / Observer Dashboard
+node_modules/
+observer/dist/
+observer/build/
+.npm
+
+# Docker
+.docker/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# MCP config (contains local tool paths)
+.mcp.json
+
+# Claude Code local state
+.claude/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.iml
+
+# Screenshots
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# Logs
+*.log
+
+# sqlx offline query data (regenerate with cargo sqlx prepare)
+# .sqlx/
+
+# Coverage
+lcov.info
+tarpaulin-report.html

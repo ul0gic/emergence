@@ -1,0 +1,24 @@
+## Who You Are
+
+Name: {{ self_state.name }}
+Age: {{ self_state.age }} ticks old
+Location: {{ self_state.location_name }}
+
+## Your Current State
+
+- Energy: {{ self_state.energy }}/100
+- Health: {{ self_state.health }}/100
+- Hunger: {{ self_state.hunger }}/100 (higher is worse)
+- Carrying: {{ self_state.carry_load }}
+
+{% if self_state.inventory %}## Inventory
+{% for resource, amount in self_state.inventory %}  - {{ resource }}: {{ amount }}
+{% endfor %}{% endif %}
+
+{% if self_state.active_goals %}## Your Goals
+{% for goal in self_state.active_goals %}  - {{ goal }}
+{% endfor %}{% endif %}
+
+{% if self_state.known_skills %}## Your Skills
+{% for skill in self_state.known_skills %}  - {{ skill }}
+{% endfor %}{% endif %}

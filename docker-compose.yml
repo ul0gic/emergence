@@ -1,0 +1,85 @@
+# Emergence — Infrastructure Services
+# Dragonfly (hot state), PostgreSQL (event store), NATS (event bus)
+#
+# Usage:
+#   docker compose up -d
+#   docker compose down
+#
+# Requires: .env file (copy from .env.example)
+#
+# Resource limits (mem_limit, cpus) are omitted because the host kernel
+# does not expose cgroup memory controllers.  Add them back when running
+# on a host with full cgroup v2 support:
+#   mem_limit: 512m
+#   cpus: 1.0
+
+services:
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: emergence-dragonfly
+    ports:
+      - "${DRAGONFLY_PORT:-6379}:6379"
+    volumes:
+      - dragonfly_data:/data
+    networks:
+      - emergence
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18
+    container_name: emergence-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-emergence}
+      POSTGRES_USER: ${POSTGRES_USER:-emergence}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - emergence
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-emergence} -d ${POSTGRES_DB:-emergence}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  nats:
+    image: nats:alpine
+    container_name: emergence-nats
+    command: ["-js", "-m", "8222", "--store_dir", "/data"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats_data:/data
+    networks:
+      - emergence
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  dragonfly_data:
+    name: emergence_dragonfly_data
+  postgres_data:
+    name: emergence_postgres_data
+  nats_data:
+    name: emergence_nats_data
+
+networks:
+  emergence:
+    name: emergence_network
+    driver: bridge

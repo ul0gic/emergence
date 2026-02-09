@@ -1,0 +1,70 @@
+/* ==========================================================================
+   Color Tokens
+   All colors for the Emergence Observer Dashboard.
+   Accessible as Tailwind utilities: bg-bg-primary, text-text-accent, etc.
+   ========================================================================== */
+
+@theme {
+  /* Backgrounds */
+  --color-bg-primary: #0d1117;
+  --color-bg-secondary: #161b22;
+  --color-bg-tertiary: #1c2128;
+  --color-bg-elevated: #21262d;
+
+  /* Borders */
+  --color-border-primary: #30363d;
+  --color-border-secondary: #21262d;
+
+  /* Text */
+  --color-text-primary: #c9d1d9;
+  --color-text-secondary: #8b949e;
+  --color-text-muted: #484f58;
+  --color-text-accent: #58a6ff;
+
+  /* Semantic */
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-danger: #f85149;
+  --color-info: #58a6ff;
+
+  /* Agent vitals */
+  --color-energy: #f0c040;
+  --color-health: #3fb950;
+  --color-hunger: #f85149;
+
+  /* Event categories */
+  --color-lifecycle: #bc8cff;
+  --color-economy: #f0c040;
+  --color-social: #58a6ff;
+  --color-world: #3fb950;
+  --color-knowledge: #ff7b72;
+  --color-system: #8b949e;
+  --color-environment: #79c0ff;
+
+  /* Seasons */
+  --color-spring: #3fb950;
+  --color-summer: #f0c040;
+  --color-autumn: #db6d28;
+  --color-winter: #79c0ff;
+
+  /* Chart palette (colorblind-safe) */
+  --color-chart-1: #58a6ff;
+  --color-chart-2: #3fb950;
+  --color-chart-3: #f0c040;
+  --color-chart-4: #bc8cff;
+  --color-chart-5: #ff7b72;
+  --color-chart-6: #79c0ff;
+  --color-chart-7: #db6d28;
+  --color-chart-8: #f778ba;
+
+  /* Map-specific */
+  --color-ocean: #060e1a;
+  --color-land: #121c2b;
+  --color-shelf: #0d1f35;
+  --color-coast: #1e3a55;
+
+  /* Relationship */
+  --color-positive: #3fb950;
+  --color-neutral: #8b949e;
+  --color-negative: #f85149;
+}

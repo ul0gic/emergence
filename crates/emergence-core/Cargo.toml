@@ -1,0 +1,24 @@
+[package]
+name = "emergence-core"
+description = "World clock, tick cycle, and orchestration for the Emergence simulation"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+emergence-types = { path = "../emergence-types" }
+emergence-agents = { path = "../emergence-agents" }
+emergence-world = { path = "../emergence-world" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = "0.0.12"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }

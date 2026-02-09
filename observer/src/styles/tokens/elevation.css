@@ -1,0 +1,10 @@
+/* ==========================================================================
+   Elevation Tokens
+   Shadows, glows, and z-index scale.
+   ========================================================================== */
+
+@theme {
+  --shadow-glow-success: 0 0 4px #3fb950;
+  --shadow-glow-warning: 0 0 4px #d29922;
+  --shadow-glow-danger: 0 0 4px #f85149;
+}

@@ -1,0 +1,32 @@
+[package]
+name = "emergence-db"
+description = "Data layer (Dragonfly + PostgreSQL) for the Emergence simulation"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+emergence-types = { path = "../emergence-types" }
+sqlx.workspace = true
+fred.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rust_decimal.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+sqlx.workspace = true
+emergence-types = { path = "../emergence-types" }
+serde.workspace = true
+serde_json.workspace = true
+rust_decimal.workspace = true
+chrono.workspace = true
+uuid.workspace = true

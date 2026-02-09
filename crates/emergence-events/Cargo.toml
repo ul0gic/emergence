@@ -1,0 +1,11 @@
+[package]
+name = "emergence-events"
+description = "Event sourcing and snapshots for the Emergence simulation"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,4 @@
+## Your Memories
+
+{% if recent_memory %}{% for memory in recent_memory %}- {{ memory }}
+{% endfor %}{% else %}You have no recent memories.{% endif %}

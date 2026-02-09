@@ -1,0 +1,160 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Emergence Team"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework (observer API)
+axum = { version = "0.8", features = ["macros", "ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Database
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+    "rust_decimal",
+] }
+rust_decimal = { version = "1", features = ["serde"] }
+
+# Redis/Dragonfly
+fred = { version = "10", features = ["i-std"] }
+
+# Pub/sub
+async-nats = "0.38"
+futures = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Type generation (Rust -> TypeScript)
+ts-rs = { version = "10", features = ["chrono-impl", "serde-json-impl", "uuid-impl"] }
+
+# IDs
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Config
+config = { version = "0.14", features = ["yaml", "toml"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Validation
+validator = { version = "0.20", features = ["derive"] }
+
+# HTTP client (LLM API calls from agent runner)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Prompt templating (agent runner)
+minijinja = { version = "2", features = ["loader"] }
+
+# Randomness (discovery mechanics, personality generation)
+rand = "0.9"
+
+# ============================================
+# LINTS — Zero-panic, zero-overflow, zero-unsafe
+# The compiler is the first line of defense.
+# ============================================
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+# ============================================
+# PANIC PREVENTION
+# ============================================
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+# ============================================
+# INTEGER SAFETY (critical for ledger)
+# ============================================
+arithmetic_side_effects = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+
+# ============================================
+# FLOAT SAFETY (resource calculations)
+# ============================================
+float_cmp = "deny"
+lossy_float_literal = "deny"
+
+# ============================================
+# MEMORY SAFETY
+# ============================================
+mem_forget = "deny"
+rc_buffer = "deny"
+rc_mutex = "deny"
+
+# ============================================
+# PERFORMANCE
+# ============================================
+perf = { level = "deny", priority = -1 }
+large_enum_variant = "deny"
+large_types_passed_by_value = "deny"
+needless_collect = "deny"
+redundant_clone = "deny"
+trivially_copy_pass_by_ref = "deny"
+unnecessary_box_returns = "deny"
+vec_init_then_push = "deny"
+
+# ============================================
+# CODE QUALITY
+# ============================================
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+# Pedantic overrides
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+redundant_pub_crate = "allow"
+significant_drop_tightening = "allow"
+future_not_send = "allow"
+
+# ============================================
+# ASYNC SAFETY
+# ============================================
+async_yields_async = "deny"
+large_futures = "deny"
+
+# ============================================
+# ERROR HANDLING
+# ============================================
+result_large_err = "deny"
+map_err_ignore = "deny"
+try_err = "deny"
+
+# ============================================
+# DOCUMENTATION
+# ============================================
+missing_const_for_fn = "deny"
+doc_markdown = "deny"

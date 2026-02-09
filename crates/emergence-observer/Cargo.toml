@@ -1,0 +1,32 @@
+[package]
+name = "emergence-observer"
+description = "Observer API server (Axum HTTP + WebSocket) for the Emergence simulation"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+emergence-types = { path = "../emergence-types" }
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+axum.workspace = true
+tower.workspace = true
+emergence-types = { path = "../emergence-types" }
+rust_decimal.workspace = true
+chrono.workspace = true
+uuid.workspace = true

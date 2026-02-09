@@ -1,0 +1,33 @@
+## What You Perceive
+
+Tick: {{ tick }}
+Time of day: {{ time_of_day }}
+Season: {{ season }}
+Weather: {{ weather }}
+
+### Location
+{{ surroundings.location_description }}
+
+{% if surroundings.visible_resources %}### Resources Available Here
+{% for resource, quantity in surroundings.visible_resources %}  - {{ resource }}: {{ quantity }}
+{% endfor %}{% endif %}
+
+{% if surroundings.structures_here %}### Structures Here
+{% for structure in surroundings.structures_here %}  - {{ structure.structure_type }} (owner: {{ structure.owner }}, condition: {{ structure.durability }}){% if structure.occupants %} [occupants: {{ structure.occupants | join(", ") }}]{% endif %}
+{% endfor %}{% endif %}
+
+{% if surroundings.agents_here %}### Other Agents Present
+{% for agent in surroundings.agents_here %}  - {{ agent.name }} ({{ agent.relationship }}) -- {{ agent.activity }}
+{% endfor %}{% endif %}
+
+{% if surroundings.messages_here %}### Recent Messages
+{% for msg in surroundings.messages_here %}  - [tick {{ msg.tick }}] {{ msg.from }}: "{{ msg.content }}"
+{% endfor %}{% endif %}
+
+{% if known_routes %}### Routes From Here
+{% for route in known_routes %}  - {{ route.destination }} ({{ route.cost }}, {{ route.path_type }})
+{% endfor %}{% endif %}
+
+{% if notifications %}### Notifications
+{% for note in notifications %}  - {{ note }}
+{% endfor %}{% endif %}

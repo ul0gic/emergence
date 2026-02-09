@@ -1,0 +1,21 @@
+[package]
+name = "emergence-world"
+description = "Geography, resources, and environment for the Emergence simulation"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+emergence-types = { path = "../emergence-types" }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+rust_decimal_macros = "1"

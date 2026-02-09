@@ -1,0 +1,23 @@
+[package]
+name = "emergence-agents"
+description = "Agent state, vitals, and actions for the Emergence simulation"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+emergence-types = { path = "../emergence-types" }
+emergence-ledger = { path = "../emergence-ledger" }
+emergence-world = { path = "../emergence-world" }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]

@@ -1,0 +1,31 @@
+## Available Actions
+
+You may choose exactly ONE of the following actions this tick:
+
+{% for action in available_actions %}- {{ action }}
+{% endfor %}
+
+## Response Instructions
+
+Choose one action from the list above and respond with valid JSON:
+
+{
+  "action_type": "ActionName",
+  "parameters": { ... },
+  "reasoning": "Why you chose this action",
+  "goal_update": ["any new or updated goals"]
+}
+
+### Parameter Reference
+
+- Gather: {"resource": "ResourceName"} -- collect a resource at this location
+- Eat: {"food_type": "FoodResourceName"} -- consume food from your inventory
+- Drink: {} -- drink water
+- Rest: {} -- recover energy
+- Move: {"destination": "location-uuid"} -- travel to another location
+- Build: {"structure_type": "StructureTypeName"} -- build a structure
+- Communicate: {"target_agent": "agent-uuid", "message": "your message"} -- message another agent
+- Broadcast: {"message": "your message"} -- post a message for all agents here
+- NoAction: {} -- do nothing this tick (hunger still increases)
+
+Choose wisely. Your survival depends on it.

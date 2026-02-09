@@ -1,0 +1,68 @@
+# =============================================================================
+# Emergence — Simulation Configuration
+# =============================================================================
+# Default parameters for the World Engine. Values here can be overridden
+# per-experiment. See .project/world-engine.md section 13 for documentation.
+# =============================================================================
+
+world:
+  name: "Experiment Alpha"
+  seed: 42                                # Random seed for reproducibility
+  tick_interval_ms: 10000                 # Real-time milliseconds per tick (10s = 1 world day)
+  agent_decision_timeout_ms: 8000         # Agents must respond within this window or forfeit
+  starting_era: "primitive"
+  knowledge_level: 1                      # 0=blank, 1=primitive, 2=ancient, 3=medieval
+
+time:
+  ticks_per_season: 90                    # 90 ticks = 1 season, 360 ticks = 1 year
+  seasons:
+    - spring
+    - summer
+    - autumn
+    - winter
+  day_night: true
+
+population:
+  initial_agents: 10
+  max_agents: 200
+  agent_lifespan_ticks: 2500              # ~7 world years (2500 / 360)
+  reproduction_enabled: true
+  child_maturity_ticks: 200               # ~0.55 world years
+
+economy:
+  starting_wallet:
+    food_berry: 10
+    water: 5
+    wood: 3
+  carry_capacity: 50
+  hunger_rate: 5                          # Hunger increase per tick
+  starvation_damage: 10                   # Health damage per tick when hunger >= 100
+  rest_recovery: 30                       # Base energy restored when resting
+  natural_heal_rate: 2                    # Health per tick when conditions met (hunger < 50, energy > 50, sheltered)
+
+environment:
+  weather_enabled: true
+  seasons_enabled: true
+  structure_decay_enabled: true
+
+discovery:
+  accidental_discovery_chance: 0.02       # 2% per tick per agent
+  observation_learning_enabled: true
+  teaching_success_base: 0.80             # 80% base success rate for teaching
+
+infrastructure:
+  dragonfly_url: "redis://localhost:6379"
+  postgres_url: "postgresql://emergence:emergence@localhost:5432/emergence"
+  nats_url: "nats://localhost:4222"
+  observer_port: 8080
+
+logging:
+  level: "info"
+  event_store_batch_size: 100             # Batch size for PostgreSQL event inserts
+  snapshot_interval_ticks: 100            # Full world snapshot every N ticks
+
+llm:
+  default_backend: "openai"
+  escalation_backend: "anthropic"
+  max_retries: 2
+  request_timeout_ms: 7000               # Must be less than agent_decision_timeout_ms
