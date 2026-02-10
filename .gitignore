@@ -22,6 +22,9 @@ observer/build/
 # Claude Code local state
 .claude/
 
+# Project design docs (local only)
+.project/
+
 # IDE
 .idea/
 .vscode/
