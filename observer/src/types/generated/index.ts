@@ -494,3 +494,149 @@ export interface OperatorMutationResponse {
   success: boolean;
   message: string;
 }
+
+// ---------------------------------------------------------------------------
+// Social construct types (Phase 6.4 — emergent social constructs)
+// ---------------------------------------------------------------------------
+
+export type SocialConstructCategory =
+  | "religion"
+  | "governance"
+  | "family"
+  | "economy"
+  | "crime_justice";
+
+export interface SocialConstruct {
+  id: string;
+  name: string;
+  category: SocialConstructCategory;
+  adherent_count: number;
+  founded_at_tick: number;
+  properties: Record<string, string>;
+}
+
+export interface BeliefSystem {
+  id: string;
+  name: string;
+  themes: string[];
+  adherent_count: number;
+  founded_at_tick: number;
+}
+
+export interface BeliefEvent {
+  tick: number;
+  event_type: "founded" | "schism" | "merged" | "converted";
+  belief_system_id: string;
+  belief_system_name: string;
+  description: string;
+  agent_id: string | null;
+}
+
+export type GovernanceType =
+  | "Anarchy"
+  | "Chieftainship"
+  | "Council"
+  | "Monarchy"
+  | "Democracy"
+  | "Oligarchy"
+  | "Theocracy";
+
+export interface GovernanceLeader {
+  agent_id: string;
+  agent_name: string;
+  role: string;
+  since_tick: number;
+}
+
+export interface GovernanceEvent {
+  tick: number;
+  event_type: "election" | "coup" | "declaration" | "succession" | "reform";
+  description: string;
+  agent_id: string | null;
+}
+
+export interface GovernanceInfo {
+  governance_type: GovernanceType;
+  leaders: GovernanceLeader[];
+  rules: string[];
+  stability_score: number;
+  recent_events: GovernanceEvent[];
+}
+
+export interface FamilyUnit {
+  id: string;
+  name: string;
+  members: string[];
+  head: string;
+  formed_at_tick: number;
+}
+
+export interface LineageNode {
+  agent_id: string;
+  agent_name: string;
+  parent_a: string | null;
+  parent_b: string | null;
+  generation: number;
+  alive: boolean;
+  children: string[];
+}
+
+export interface FamilyStats {
+  unit_count: number;
+  avg_size: number;
+  marriage_count: number;
+  divorce_count: number;
+  orphan_count: number;
+  longest_lineage: number;
+  families: FamilyUnit[];
+  lineage: LineageNode[];
+}
+
+export type EconomicModelType = "Subsistence" | "Gift" | "Barter" | "Currency" | "Market" | "Mixed";
+
+export interface MarketLocation {
+  location_id: string;
+  location_name: string;
+  trade_volume: number;
+  primary_resource: Resource;
+}
+
+export interface EconomicClassification {
+  model_type: EconomicModelType;
+  currency_resource: Resource | null;
+  currency_adoption_pct: number;
+  trade_volume: number;
+  trade_volume_history: { tick: number; volume: number }[];
+  market_locations: MarketLocation[];
+}
+
+export type JusticeType = "None" | "Vigilante" | "Elder" | "Council" | "Codified" | "Institutional";
+
+export interface CrimeEntry {
+  crime_type: string;
+  count: number;
+}
+
+export interface SerialOffender {
+  agent_id: string;
+  agent_name: string;
+  offense_count: number;
+  last_offense_tick: number;
+}
+
+export interface CrimeHotspot {
+  location_id: string;
+  location_name: string;
+  crime_count: number;
+}
+
+export interface CrimeStats {
+  crime_rate: number;
+  crime_rate_history: { tick: number; rate: number }[];
+  detection_rate: number;
+  punishment_rate: number;
+  justice_type: JusticeType;
+  common_crimes: CrimeEntry[];
+  serial_offenders: SerialOffender[];
+  hotspots: CrimeHotspot[];
+}

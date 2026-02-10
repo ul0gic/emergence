@@ -9,15 +9,25 @@
 //!
 //! - [`actions`] -- Action validation, execution, conflict resolution, and costs.
 //! - [`agent`] -- Agent creation and management ([`AgentManager`])
+//! - [`belief_detection`] -- Belief/narrative detection from agent communications
+//! - [`communication`] -- Private/secret communication: whisper, conspire, location announcements
 //! - [`config`] -- Configurable parameters for vital mechanics ([`VitalsConfig`])
+//! - [`constructs`] -- Social construct data model (religion, governance, etc.)
 //! - [`crafting`] -- Crafting recipes for workshop production (Tool, `ToolAdvanced`, Medicine)
+//! - [`crime_justice`] -- Crime recording, punishment tracking, justice system classification
 //! - [`death`] -- Death conditions and consequences ([`DeathCause`], [`DeathConsequences`])
 //! - [`deception`] -- Deception tracking, lie history, discovery mechanics
 //! - [`diplomacy`] -- Diplomacy actions: alliances, conflicts, treaties, tribute
+//! - [`economy_detection`] -- Economic system detection, currency, markets, Gini coefficient
 //! - [`error`] -- Error types for all agent operations ([`AgentError`])
+//! - [`family`] -- Family units, lineage tracking, marriage/divorce/birth records
+//! - [`governance`] -- Governance structure tracking and classification
 //! - [`inventory`] -- Inventory (wallet) operations with carry capacity
 //! - [`knowledge`] -- Knowledge base, tech tree, seed knowledge, discovery mechanics
 //! - [`memory`] -- Tiered memory storage, compression, and perception filtering
+//! - [`persuasion`] -- Persuasion mechanics: belief change, recruitment, allegiance shifts
+//! - [`propaganda`] -- Persistent public declarations at locations that influence newcomers
+//! - [`reputation`] -- Observable reputation system: tags, observations, decay, perception summaries
 //! - [`skills`] -- Skill levels, XP tracking, level-up mechanics, skill effects
 //! - [`social`] -- Social graph, relationship tracking, and group formation
 //! - [`reproduction`] -- Reproduction, maturity, aging, and population cap mechanics
@@ -26,15 +36,25 @@
 
 pub mod actions;
 pub mod agent;
+pub mod belief_detection;
+pub mod communication;
 pub mod config;
+pub mod constructs;
 pub mod crafting;
+pub mod crime_justice;
 pub mod death;
 pub mod deception;
 pub mod diplomacy;
+pub mod economy_detection;
 pub mod error;
+pub mod family;
+pub mod governance;
 pub mod inventory;
 pub mod knowledge;
 pub mod memory;
+pub mod persuasion;
+pub mod propaganda;
+pub mod reputation;
 pub mod reproduction;
 pub mod skills;
 pub mod social;
@@ -77,3 +97,32 @@ pub use diplomacy::{
     DiplomacyState, Treaty, TreatyTerms, TributeRecord,
 };
 pub use vitals::VitalTickResult;
+pub use constructs::{
+    ConstructEvent, ConstructEventType, ConstructRegistry, SocialConstruct,
+    SocialConstructCategory,
+};
+pub use belief_detection::{BeliefDetector, BeliefTheme, DetectedBelief, SchismRisk};
+pub use governance::{
+    GovernanceTracker, GovernanceType, LeadershipClaim, RuleDeclaration, VoteRecord,
+};
+pub use family::{FamilyBond, FamilyRole, FamilyTracker, FamilyUnit};
+pub use economy_detection::{
+    EconomicDetector, EconomicEvent, EconomicIndicator, EconomicModel,
+};
+pub use crime_justice::{
+    CrimeRecord, CrimeTracker, CrimeType, JusticePattern, PunishmentRecord, PunishmentType,
+};
+pub use communication::{
+    CommunicationStats, MessageRouter, MessageVisibility, PrivateMessage,
+};
+pub use persuasion::{
+    PersuasionAttempt, PersuasionContext, PersuasionEvaluator, PersuasionRecord, PersuasionResult,
+    PersuasionType,
+};
+pub use reputation::{
+    ActionReputationEvent, ReputationAction, ReputationEntry, ReputationObservation,
+    ReputationProfile, ReputationTag, ReputationTracker,
+};
+pub use propaganda::{
+    PropagandaBoard, PropagandaInfluence, PropagandaParams, PropagandaPost, PropagandaType,
+};

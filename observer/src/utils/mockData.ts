@@ -7,7 +7,13 @@
 import type {
   AgentDetailResponse,
   AgentListItem,
+  BeliefEvent,
+  BeliefSystem,
+  CrimeStats,
+  EconomicClassification,
   Event,
+  FamilyStats,
+  GovernanceInfo,
   LocationListItem,
   OperatorStatus,
   TickBroadcast,
@@ -697,4 +703,309 @@ export const MOCK_OPERATOR_STATUS: OperatorStatus = {
   era: "Primitive",
   season: "Autumn",
   uptime_seconds: 3720,
+};
+
+// ---------------------------------------------------------------------------
+// Mock social construct data (Phase 6.4 — Social Constructs)
+// ---------------------------------------------------------------------------
+
+export const MOCK_BELIEF_SYSTEMS: BeliefSystem[] = [
+  {
+    id: "bs-001",
+    name: "River Watchers",
+    themes: ["water", "cycles", "renewal", "fish"],
+    adherent_count: 5,
+    founded_at_tick: 45,
+  },
+  {
+    id: "bs-002",
+    name: "Stone Seekers",
+    themes: ["stone", "permanence", "earth", "shelter"],
+    adherent_count: 3,
+    founded_at_tick: 80,
+  },
+  {
+    id: "bs-003",
+    name: "Fire Keepers",
+    themes: ["fire", "warmth", "cooking", "transformation"],
+    adherent_count: 4,
+    founded_at_tick: 120,
+  },
+];
+
+export const MOCK_BELIEF_EVENTS: BeliefEvent[] = [
+  {
+    tick: 45,
+    event_type: "founded",
+    belief_system_id: "bs-001",
+    belief_system_name: "River Watchers",
+    description:
+      "Kora established the River Watchers belief system after observing tidal patterns.",
+    agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a1",
+  },
+  {
+    tick: 80,
+    event_type: "founded",
+    belief_system_id: "bs-002",
+    belief_system_name: "Stone Seekers",
+    description: "Dax founded Stone Seekers after building the first stone shelter.",
+    agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a3",
+  },
+  {
+    tick: 120,
+    event_type: "founded",
+    belief_system_id: "bs-003",
+    belief_system_name: "Fire Keepers",
+    description: "Rune established Fire Keepers around communal campfire rituals.",
+    agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a5",
+  },
+  {
+    tick: 160,
+    event_type: "converted",
+    belief_system_id: "bs-001",
+    belief_system_name: "River Watchers",
+    description: "Maren converted to River Watchers after receiving help at the Riverbank.",
+    agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a2",
+  },
+  {
+    tick: 195,
+    event_type: "schism",
+    belief_system_id: "bs-003",
+    belief_system_name: "Fire Keepers",
+    description: "Thane rejected Fire Keeper teachings, causing a minor schism.",
+    agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a6",
+  },
+];
+
+export const MOCK_GOVERNANCE: GovernanceInfo = {
+  governance_type: "Chieftainship",
+  leaders: [
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a1",
+      agent_name: "Kora",
+      role: "Chief",
+      since_tick: 130,
+    },
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a5",
+      agent_name: "Rune",
+      role: "Advisor",
+      since_tick: 170,
+    },
+  ],
+  rules: [
+    "No stealing from communal stores",
+    "Share food during drought",
+    "Disputes settled by Chief",
+  ],
+  stability_score: 0.72,
+  recent_events: [
+    {
+      tick: 200,
+      event_type: "declaration",
+      description: "Kora declared drought sharing rule after observing hoarding behavior.",
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a1",
+    },
+    {
+      tick: 185,
+      event_type: "succession",
+      description: "Rune appointed as advisor after demonstrating cooking knowledge.",
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a5",
+    },
+    {
+      tick: 170,
+      event_type: "election",
+      description: "Group consensus chose Kora as chief based on building contributions.",
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a1",
+    },
+  ],
+};
+
+export const MOCK_FAMILY_STATS: FamilyStats = {
+  unit_count: 3,
+  avg_size: 2.7,
+  marriage_count: 2,
+  divorce_count: 0,
+  orphan_count: 0,
+  longest_lineage: 2,
+  families: [
+    {
+      id: "fam-001",
+      name: "Kora-Maren",
+      members: [
+        "01945c2a-3b4f-7def-8a12-bc34567890a1",
+        "01945c2a-3b4f-7def-8a12-bc34567890a2",
+        "01945c2a-3b4f-7def-8a12-bc34567890a7",
+      ],
+      head: "01945c2a-3b4f-7def-8a12-bc34567890a1",
+      formed_at_tick: 60,
+    },
+    {
+      id: "fam-002",
+      name: "Dax-Vela",
+      members: [
+        "01945c2a-3b4f-7def-8a12-bc34567890a3",
+        "01945c2a-3b4f-7def-8a12-bc34567890a4",
+        "01945c2a-3b4f-7def-8a12-bc34567890a9",
+      ],
+      head: "01945c2a-3b4f-7def-8a12-bc34567890a4",
+      formed_at_tick: 90,
+    },
+    {
+      id: "fam-003",
+      name: "Rune-Ember",
+      members: ["01945c2a-3b4f-7def-8a12-bc34567890a5", "01945c2a-3b4f-7def-8a12-bc3456789010"],
+      head: "01945c2a-3b4f-7def-8a12-bc34567890a5",
+      formed_at_tick: 140,
+    },
+  ],
+  lineage: [
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a1",
+      agent_name: "Kora",
+      parent_a: null,
+      parent_b: null,
+      generation: 0,
+      alive: true,
+      children: ["01945c2a-3b4f-7def-8a12-bc34567890a7"],
+    },
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a2",
+      agent_name: "Maren",
+      parent_a: null,
+      parent_b: null,
+      generation: 0,
+      alive: true,
+      children: ["01945c2a-3b4f-7def-8a12-bc34567890a7"],
+    },
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a7",
+      agent_name: "Lyra",
+      parent_a: "01945c2a-3b4f-7def-8a12-bc34567890a1",
+      parent_b: "01945c2a-3b4f-7def-8a12-bc34567890a2",
+      generation: 1,
+      alive: true,
+      children: [],
+    },
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a3",
+      agent_name: "Dax",
+      parent_a: null,
+      parent_b: null,
+      generation: 0,
+      alive: true,
+      children: ["01945c2a-3b4f-7def-8a12-bc34567890a9"],
+    },
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a4",
+      agent_name: "Vela",
+      parent_a: null,
+      parent_b: null,
+      generation: 0,
+      alive: true,
+      children: ["01945c2a-3b4f-7def-8a12-bc34567890a9"],
+    },
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a9",
+      agent_name: "Sage",
+      parent_a: "01945c2a-3b4f-7def-8a12-bc34567890a4",
+      parent_b: "01945c2a-3b4f-7def-8a12-bc34567890a3",
+      generation: 1,
+      alive: true,
+      children: [],
+    },
+  ],
+};
+
+export const MOCK_ECONOMIC_CLASSIFICATION: EconomicClassification = {
+  model_type: "Barter",
+  currency_resource: null,
+  currency_adoption_pct: 0,
+  trade_volume: 47,
+  trade_volume_history: [
+    { tick: 50, volume: 2 },
+    { tick: 70, volume: 5 },
+    { tick: 90, volume: 4 },
+    { tick: 110, volume: 8 },
+    { tick: 130, volume: 6 },
+    { tick: 150, volume: 12 },
+    { tick: 170, volume: 9 },
+    { tick: 190, volume: 15 },
+    { tick: 210, volume: 18 },
+  ],
+  market_locations: [
+    {
+      location_id: "01945c2a-3b4f-7def-8a12-bc34567890c1",
+      location_name: "Riverbank",
+      trade_volume: 28,
+      primary_resource: "FoodFish",
+    },
+    {
+      location_id: "01945c2a-3b4f-7def-8a12-bc34567890c3",
+      location_name: "Open Field",
+      trade_volume: 12,
+      primary_resource: "FoodBerry",
+    },
+    {
+      location_id: "01945c2a-3b4f-7def-8a12-bc34567890c2",
+      location_name: "Forest Edge",
+      trade_volume: 7,
+      primary_resource: "Wood",
+    },
+  ],
+};
+
+export const MOCK_CRIME_STATS: CrimeStats = {
+  crime_rate: 0.08,
+  crime_rate_history: [
+    { tick: 50, rate: 0.0 },
+    { tick: 70, rate: 0.02 },
+    { tick: 90, rate: 0.0 },
+    { tick: 110, rate: 0.05 },
+    { tick: 130, rate: 0.03 },
+    { tick: 150, rate: 0.06 },
+    { tick: 170, rate: 0.1 },
+    { tick: 190, rate: 0.12 },
+    { tick: 210, rate: 0.08 },
+  ],
+  detection_rate: 0.65,
+  punishment_rate: 0.4,
+  justice_type: "Elder",
+  common_crimes: [
+    { crime_type: "Resource theft", count: 5 },
+    { crime_type: "Trespassing", count: 3 },
+    { crime_type: "Food hoarding", count: 2 },
+    { crime_type: "Trade fraud", count: 1 },
+  ],
+  serial_offenders: [
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a6",
+      agent_name: "Thane",
+      offense_count: 4,
+      last_offense_tick: 195,
+    },
+    {
+      agent_id: "01945c2a-3b4f-7def-8a12-bc34567890a3",
+      agent_name: "Dax",
+      offense_count: 2,
+      last_offense_tick: 170,
+    },
+  ],
+  hotspots: [
+    {
+      location_id: "01945c2a-3b4f-7def-8a12-bc34567890c4",
+      location_name: "Rocky Outcrop",
+      crime_count: 4,
+    },
+    {
+      location_id: "01945c2a-3b4f-7def-8a12-bc34567890c2",
+      location_name: "Forest Edge",
+      crime_count: 3,
+    },
+    {
+      location_id: "01945c2a-3b4f-7def-8a12-bc34567890c1",
+      location_name: "Riverbank",
+      crime_count: 2,
+    },
+  ],
 };

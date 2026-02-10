@@ -416,3 +416,165 @@ export function parseOperatorStatus(data: unknown) {
 export function parseOperatorMutationResponse(data: unknown) {
   return OperatorMutationResponseSchema.parse(data);
 }
+
+// ---------------------------------------------------------------------------
+// Social construct schemas (Phase 6.4)
+// ---------------------------------------------------------------------------
+
+export const SocialConstructCategorySchema = z.enum([
+  "religion",
+  "governance",
+  "family",
+  "economy",
+  "crime_justice",
+]);
+
+export const SocialConstructSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  category: SocialConstructCategorySchema,
+  adherent_count: z.number(),
+  founded_at_tick: z.number(),
+  properties: z.record(z.string(), z.string()),
+});
+
+export const BeliefSystemSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  themes: z.array(z.string()),
+  adherent_count: z.number(),
+  founded_at_tick: z.number(),
+});
+
+export const BeliefEventSchema = z.object({
+  tick: z.number(),
+  event_type: z.enum(["founded", "schism", "merged", "converted"]),
+  belief_system_id: z.string(),
+  belief_system_name: z.string(),
+  description: z.string(),
+  agent_id: z.string().nullable(),
+});
+
+export const GovernanceTypeSchema = z.enum([
+  "Anarchy",
+  "Chieftainship",
+  "Council",
+  "Monarchy",
+  "Democracy",
+  "Oligarchy",
+  "Theocracy",
+]);
+
+export const GovernanceLeaderSchema = z.object({
+  agent_id: z.string(),
+  agent_name: z.string(),
+  role: z.string(),
+  since_tick: z.number(),
+});
+
+export const GovernanceEventSchema = z.object({
+  tick: z.number(),
+  event_type: z.enum(["election", "coup", "declaration", "succession", "reform"]),
+  description: z.string(),
+  agent_id: z.string().nullable(),
+});
+
+export const GovernanceInfoSchema = z.object({
+  governance_type: GovernanceTypeSchema,
+  leaders: z.array(GovernanceLeaderSchema),
+  rules: z.array(z.string()),
+  stability_score: z.number(),
+  recent_events: z.array(GovernanceEventSchema),
+});
+
+export const FamilyUnitSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  members: z.array(z.string()),
+  head: z.string(),
+  formed_at_tick: z.number(),
+});
+
+export const LineageNodeSchema = z.object({
+  agent_id: z.string(),
+  agent_name: z.string(),
+  parent_a: z.string().nullable(),
+  parent_b: z.string().nullable(),
+  generation: z.number(),
+  alive: z.boolean(),
+  children: z.array(z.string()),
+});
+
+export const FamilyStatsSchema = z.object({
+  unit_count: z.number(),
+  avg_size: z.number(),
+  marriage_count: z.number(),
+  divorce_count: z.number(),
+  orphan_count: z.number(),
+  longest_lineage: z.number(),
+  families: z.array(FamilyUnitSchema),
+  lineage: z.array(LineageNodeSchema),
+});
+
+export const EconomicModelTypeSchema = z.enum([
+  "Subsistence",
+  "Gift",
+  "Barter",
+  "Currency",
+  "Market",
+  "Mixed",
+]);
+
+export const MarketLocationSchema = z.object({
+  location_id: z.string(),
+  location_name: z.string(),
+  trade_volume: z.number(),
+  primary_resource: ResourceSchema,
+});
+
+export const EconomicClassificationSchema = z.object({
+  model_type: EconomicModelTypeSchema,
+  currency_resource: ResourceSchema.nullable(),
+  currency_adoption_pct: z.number(),
+  trade_volume: z.number(),
+  trade_volume_history: z.array(z.object({ tick: z.number(), volume: z.number() })),
+  market_locations: z.array(MarketLocationSchema),
+});
+
+export const JusticeTypeSchema = z.enum([
+  "None",
+  "Vigilante",
+  "Elder",
+  "Council",
+  "Codified",
+  "Institutional",
+]);
+
+export const CrimeEntrySchema = z.object({
+  crime_type: z.string(),
+  count: z.number(),
+});
+
+export const SerialOffenderSchema = z.object({
+  agent_id: z.string(),
+  agent_name: z.string(),
+  offense_count: z.number(),
+  last_offense_tick: z.number(),
+});
+
+export const CrimeHotspotSchema = z.object({
+  location_id: z.string(),
+  location_name: z.string(),
+  crime_count: z.number(),
+});
+
+export const CrimeStatsSchema = z.object({
+  crime_rate: z.number(),
+  crime_rate_history: z.array(z.object({ tick: z.number(), rate: z.number() })),
+  detection_rate: z.number(),
+  punishment_rate: z.number(),
+  justice_type: JusticeTypeSchema,
+  common_crimes: z.array(CrimeEntrySchema),
+  serial_offenders: z.array(SerialOffenderSchema),
+  hotspots: z.array(CrimeHotspotSchema),
+});

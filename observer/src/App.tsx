@@ -15,6 +15,7 @@ import DiscoveryLog from "./components/DiscoveryLog.tsx";
 import EconomyMonitor from "./components/EconomyMonitor.tsx";
 import OperatorControls from "./components/OperatorControls.tsx";
 import PopulationTracker from "./components/PopulationTracker.tsx";
+import SocialConstructs from "./components/SocialConstructs.tsx";
 import SocialGraph from "./components/SocialGraph.tsx";
 import Timeline from "./components/Timeline.tsx";
 import WorldMap from "./components/WorldMap.tsx";
@@ -39,7 +40,8 @@ type TabId =
   | "timeline"
   | "population"
   | "discovery"
-  | "operator";
+  | "operator"
+  | "constructs";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "world", label: "World Map" },
@@ -50,6 +52,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "population", label: "Population" },
   { id: "discovery", label: "Discoveries" },
   { id: "operator", label: "Operator" },
+  { id: "constructs", label: "Constructs" },
 ];
 
 function connectionStatusLabel(status: ConnectionStatus): string {
@@ -174,6 +177,7 @@ export default function App() {
         "6": "population",
         "7": "discovery",
         "8": "operator",
+        "9": "constructs",
       };
       const tab = tabKeys[e.key];
       if (tab) {
@@ -312,6 +316,7 @@ export default function App() {
         {activeTab === "operator" && (
           <OperatorControls connectionStatus={status} useMock={useMock} />
         )}
+        {activeTab === "constructs" && <SocialConstructs useMock={useMock} />}
       </main>
     </div>
   );
