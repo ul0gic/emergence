@@ -12,6 +12,8 @@
 //! - [`config`] -- Configurable parameters for vital mechanics ([`VitalsConfig`])
 //! - [`crafting`] -- Crafting recipes for workshop production (Tool, `ToolAdvanced`, Medicine)
 //! - [`death`] -- Death conditions and consequences ([`DeathCause`], [`DeathConsequences`])
+//! - [`deception`] -- Deception tracking, lie history, discovery mechanics
+//! - [`diplomacy`] -- Diplomacy actions: alliances, conflicts, treaties, tribute
 //! - [`error`] -- Error types for all agent operations ([`AgentError`])
 //! - [`inventory`] -- Inventory (wallet) operations with carry capacity
 //! - [`knowledge`] -- Knowledge base, tech tree, seed knowledge, discovery mechanics
@@ -27,6 +29,8 @@ pub mod agent;
 pub mod config;
 pub mod crafting;
 pub mod death;
+pub mod deception;
+pub mod diplomacy;
 pub mod error;
 pub mod inventory;
 pub mod knowledge;
@@ -64,4 +68,12 @@ pub use reproduction::{
 };
 pub use crafting::{CraftRecipe, craftable_outputs, recipe_for};
 pub use social::{SocialGraph, form_group};
+pub use deception::{
+    DeceptionDiscovery, DeceptionRecord, DeceptionSeverity, DeceptionTracker, DeceptionType,
+    classify_severity,
+};
+pub use diplomacy::{
+    Alliance, AllianceStatus, AllianceTerms, Conflict, DiplomacyError, DiplomacyResult,
+    DiplomacyState, Treaty, TreatyTerms, TributeRecord,
+};
 pub use vitals::VitalTickResult;

@@ -68,6 +68,16 @@ pub const fn energy_cost(action: ActionType) -> u32 {
         ActionType::Legislate => 10,
         ActionType::Enforce => 15,
         ActionType::Reproduce => 30,
+        ActionType::Steal => 15,
+        ActionType::Attack => 20,
+        ActionType::Intimidate => 10,
+        ActionType::Propose => 5,
+        ActionType::Vote => 2,
+        ActionType::Marry => 10,
+        ActionType::Divorce => 5,
+        ActionType::Conspire => 10,
+        ActionType::Pray => 5,
+        ActionType::Freeform => 10,
         ActionType::NoAction => 0,
     }
 }

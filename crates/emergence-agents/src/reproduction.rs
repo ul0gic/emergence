@@ -193,6 +193,15 @@ pub const fn is_action_restricted_for_immature(action: ActionType) -> bool {
             | ActionType::Legislate
             | ActionType::Enforce
             | ActionType::Reproduce
+            | ActionType::Steal
+            | ActionType::Attack
+            | ActionType::Intimidate
+            | ActionType::Propose
+            | ActionType::Vote
+            | ActionType::Marry
+            | ActionType::Divorce
+            | ActionType::Conspire
+            | ActionType::Freeform
     )
 }
 

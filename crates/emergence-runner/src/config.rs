@@ -23,6 +23,23 @@ pub struct RunnerConfig {
     pub max_concurrent_calls: usize,
     /// Path to the templates directory.
     pub templates_dir: String,
+    /// Whether to route LLM calls based on tick complexity scoring.
+    ///
+    /// When enabled, high-complexity decisions are sent to the escalation
+    /// backend first, while low/medium complexity decisions use the
+    /// primary (cheap/fast) backend. When disabled, all decisions use
+    /// the primary backend with the escalation backend as fallback only.
+    pub complexity_routing_enabled: bool,
+    /// When true, bypass the LLM for obvious survival decisions
+    /// (eat when starving, rest when exhausted, etc.).
+    ///
+    /// Corresponds to `llm.routine_action_bypass` in `emergence-config.yaml`.
+    pub routine_action_bypass: bool,
+    /// When true, sleeping or low-energy agents at night skip the
+    /// LLM call entirely and auto-rest.
+    ///
+    /// Corresponds to `llm.night_cycle_skip` in `emergence-config.yaml`.
+    pub night_cycle_skip: bool,
 }
 
 /// Configuration for a single LLM backend.
@@ -65,6 +82,9 @@ impl RunnerConfig {
     /// - `DECISION_TIMEOUT_MS` -- decision deadline in milliseconds (default 7000)
     /// - `MAX_CONCURRENT_CALLS` -- max parallel LLM calls (default 20)
     /// - `TEMPLATES_DIR` -- path to prompt templates (default `templates`)
+    /// - `COMPLEXITY_ROUTING_ENABLED` -- enable complexity-based backend routing (default `true`)
+    /// - `ROUTINE_ACTION_BYPASS` -- bypass LLM for obvious survival actions (default `true`)
+    /// - `NIGHT_CYCLE_SKIP` -- skip LLM for sleeping agents at night (default `true`)
     pub fn from_env() -> Result<Self, RunnerError> {
         let nats_url = env_var("NATS_URL")?;
         let primary_backend = load_backend_config("LLM_DEFAULT")?;
@@ -84,6 +104,27 @@ impl RunnerConfig {
         let templates_dir =
             std::env::var("TEMPLATES_DIR").unwrap_or_else(|_| "templates".to_owned());
 
+        let complexity_routing_enabled: bool = std::env::var("COMPLEXITY_ROUTING_ENABLED")
+            .unwrap_or_else(|_| "true".to_owned())
+            .parse()
+            .map_err(|e| {
+                RunnerError::Config(format!("invalid COMPLEXITY_ROUTING_ENABLED: {e}"))
+            })?;
+
+        let routine_action_bypass: bool = std::env::var("ROUTINE_ACTION_BYPASS")
+            .unwrap_or_else(|_| "true".to_owned())
+            .parse()
+            .map_err(|e| {
+                RunnerError::Config(format!("invalid ROUTINE_ACTION_BYPASS: {e}"))
+            })?;
+
+        let night_cycle_skip: bool = std::env::var("NIGHT_CYCLE_SKIP")
+            .unwrap_or_else(|_| "true".to_owned())
+            .parse()
+            .map_err(|e| {
+                RunnerError::Config(format!("invalid NIGHT_CYCLE_SKIP: {e}"))
+            })?;
+
         Ok(Self {
             nats_url,
             primary_backend,
@@ -91,6 +132,9 @@ impl RunnerConfig {
             decision_timeout: Duration::from_millis(decision_timeout_ms),
             max_concurrent_calls,
             templates_dir,
+            complexity_routing_enabled,
+            routine_action_bypass,
+            night_cycle_skip,
         })
     }
 }

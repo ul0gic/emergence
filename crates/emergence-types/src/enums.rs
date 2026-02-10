@@ -216,6 +216,38 @@ pub enum ActionType {
     /// Spawn a child agent with a consenting partner.
     Reproduce,
 
+    // --- Conflict ---
+    /// Take resources from a co-located agent by force or stealth.
+    Steal,
+    /// Engage in physical confrontation with another agent.
+    Attack,
+    /// Intimidate a co-located agent without dealing damage.
+    Intimidate,
+
+    // --- Diplomacy ---
+    /// Propose a group decision, alliance, or treaty.
+    Propose,
+    /// Cast a vote on a pending group proposal.
+    Vote,
+    /// Enter a formal partnership with another agent.
+    Marry,
+    /// Dissolve a formal partnership with another agent.
+    Divorce,
+    /// Engage in secret coordination with a subset of agents.
+    Conspire,
+
+    // --- Spiritual ---
+    /// Perform a spiritual or ritualistic action.
+    Pray,
+
+    // --- Freeform ---
+    /// A novel action proposed by an agent beyond the base catalog.
+    ///
+    /// Freeform actions are evaluated by the feasibility engine before
+    /// execution. If the engine can map the action to a known category,
+    /// it resolves it; otherwise it queues it for LLM adjudication.
+    Freeform,
+
     // --- System ---
     /// Agent did not act this tick (timeout or explicit forfeit).
     NoAction,
@@ -301,6 +333,16 @@ pub enum EventType {
     /// The season transitioned.
     SeasonChanged,
 
+    // --- Conflict ---
+    /// A theft was successfully committed (resources transferred).
+    TheftOccurred,
+    /// A theft attempt failed (caught or insufficient resources).
+    TheftFailed,
+    /// A combat encounter was initiated.
+    CombatInitiated,
+    /// A combat encounter was resolved (winner determined, damage applied).
+    CombatResolved,
+
     // --- System (alert) ---
     /// Conservation law violated -- critical ledger alert.
     LedgerAnomaly,
@@ -336,6 +378,10 @@ pub enum RejectionReason {
     PermissionDenied,
     /// Agent missed the decision deadline.
     Timeout,
+    /// A freeform action was deemed physically impossible.
+    Infeasible,
+    /// A freeform action is too ambiguous for rule-based evaluation.
+    NeedsEvaluation,
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +518,10 @@ pub enum LedgerEntryType {
     Drop,
     /// Scavenging dropped items (location -> agent).
     Pickup,
+    /// Resources stolen from one agent to another (agent -> agent).
+    Theft,
+    /// Resources looted from a defeated agent (agent -> agent).
+    CombatLoot,
 }
 
 // ---------------------------------------------------------------------------

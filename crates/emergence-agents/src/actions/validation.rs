@@ -175,6 +175,16 @@ const fn validate_syntax(
             | (ActionType::Legislate, ActionParameters::Legislate { .. })
             | (ActionType::Enforce, ActionParameters::Enforce { .. })
             | (ActionType::Reproduce, ActionParameters::Reproduce { .. })
+            | (ActionType::Steal, ActionParameters::Steal { .. })
+            | (ActionType::Attack, ActionParameters::Attack { .. })
+            | (ActionType::Intimidate, ActionParameters::Intimidate { .. })
+            | (ActionType::Propose, ActionParameters::Propose { .. })
+            | (ActionType::Vote, ActionParameters::Vote { .. })
+            | (ActionType::Marry, ActionParameters::Marry { .. })
+            | (ActionType::Divorce, ActionParameters::Divorce { .. })
+            | (ActionType::Conspire, ActionParameters::Conspire { .. })
+            | (ActionType::Pray, ActionParameters::Pray { .. })
+            | (ActionType::Freeform, ActionParameters::Freeform(_))
             | (ActionType::NoAction, ActionParameters::NoAction)
     );
 
@@ -263,7 +273,10 @@ fn validate_location(
             }
         }
         (ActionType::TradeOffer, ActionParameters::TradeOffer { target_agent, .. })
-        | (ActionType::Enforce, ActionParameters::Enforce { target_agent, .. }) => {
+        | (ActionType::Enforce, ActionParameters::Enforce { target_agent, .. })
+        | (ActionType::Steal, ActionParameters::Steal { target_agent, .. })
+        | (ActionType::Attack, ActionParameters::Attack { target_agent, .. })
+        | (ActionType::Intimidate, ActionParameters::Intimidate { target_agent, .. }) => {
             // Target agent must be at the same location
             if !context.agents_at_location.contains(target_agent) {
                 return Err(RejectionReason::InvalidTarget);

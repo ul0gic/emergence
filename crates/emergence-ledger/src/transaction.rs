@@ -199,6 +199,9 @@ const fn expected_entity_types(
         LedgerEntryType::Salvage => (Some(EntityType::Structure), Some(EntityType::Agent)),
         LedgerEntryType::Decay => (Some(EntityType::Structure), Some(EntityType::Void)),
         LedgerEntryType::Drop => (Some(EntityType::Agent), Some(EntityType::Location)),
+        LedgerEntryType::Theft | LedgerEntryType::CombatLoot => {
+            (Some(EntityType::Agent), Some(EntityType::Agent))
+        }
     }
 }
 

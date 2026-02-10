@@ -28,10 +28,12 @@ This is not a chatbot playground. This is a **digital anthropology experiment**.
 
 ### Core Principles
 
-- **Zero Intervention** -- Once agents are seeded, the operator does not interfere
+- **Autonomous with Operator Controls** -- Once agents are seeded, operators observe and can adjust simulation parameters (pause, speed, inject events) but never control agent decisions
 - **Full Observability** -- Every action, transaction, and decision is logged as an immutable event
 - **Closed Economy** -- All resources are finite and internally circulated. There is no "outside"
 - **Emergent Behavior Only** -- Agents are not scripted. They have personality, memory, and needs. Everything else must emerge
+- **Two-Layer Architecture** -- Hard physics (World Engine, deterministic) + soft culture (emergent, agent-driven). Religion, governance, crime, family structures -- all must arise organically
+- **Bounded Experiments** -- Simulations run for a configurable duration (default 24 real hours), then stop for analysis. Full history preserved
 - **Containment First** -- Fully isolated. No network access. No escape
 
 ---
@@ -56,10 +58,9 @@ graph TB
         end
 
         subgraph LLM["LLM Backends (REST)"]
-            DS[DeepSeek API<br/>Routine Decisions]
-            OAI[OpenAI API<br/>Fallback]
+            RULE[Rule Engine<br/>Routine Bypass]
+            OAI[OpenAI API<br/>Primary / Routine]
             ANT[Anthropic API<br/>Escalation]
-            OLL[Ollama<br/>Local / Offline]
         end
 
         subgraph DATA["Data Layer"]
@@ -86,6 +87,7 @@ graph TB
     DF -->|hot queries| ENGINE
     PG -.->|read-only tap| OBS
     NATS -.->|tick stream via WebSocket| OBS
+    OBS -->|operator controls| ENGINE
 
     style ISOLATED fill:#0d1b2a,stroke:#1e40af,stroke-width:2px
     style ENGINE fill:#172554,stroke:#3b82f6,stroke-width:2px
@@ -103,10 +105,9 @@ graph TB
     style PG fill:#0c4a6e,stroke:#38bdf8
     style NATS fill:#0c4a6e,stroke:#38bdf8
     style OBS fill:#1e3a5f,stroke:#60a5fa
-    style DS fill:#1e293b,stroke:#60a5fa
+    style RULE fill:#1e293b,stroke:#60a5fa
     style OAI fill:#1e293b,stroke:#60a5fa
     style ANT fill:#1e293b,stroke:#60a5fa
-    style OLL fill:#1e293b,stroke:#60a5fa
 ```
 
 ### The Tick Cycle
@@ -229,6 +230,53 @@ erDiagram
         JSONB full_state
     }
 
+    simulation_runs {
+        UUID id PK "uuidv7()"
+        TEXT name
+        ENUM status "pending..stopped"
+        BIGINT max_ticks "nullable"
+        INT max_real_time_seconds "nullable"
+        JSONB config_snapshot
+        BIGINT seed "nullable"
+    }
+
+    operator_actions {
+        UUID id PK "uuidv7()"
+        UUID run_id FK
+        BIGINT tick
+        ENUM action_type "pause..inject_event"
+        JSONB parameters
+    }
+
+    social_constructs {
+        UUID id PK "uuidv7()"
+        TEXT name
+        ENUM category "religion..cultural"
+        UUID founded_by FK "nullable"
+        BIGINT founded_at_tick
+        BIGINT disbanded_at_tick "nullable"
+        JSONB properties
+    }
+
+    deception_records {
+        UUID id PK "uuidv7()"
+        UUID deceiver FK
+        UUID target FK "nullable"
+        BIGINT tick
+        TEXT claimed_information
+        TEXT actual_truth
+        BOOLEAN discovered
+    }
+
+    reputation_events {
+        UUID id PK "uuidv7()"
+        UUID subject FK
+        UUID observer FK
+        BIGINT tick
+        FLOAT delta
+        TEXT context
+    }
+
     agents ||--o{ agents : "parent_a / parent_b"
     agents ||--o{ structures : "builder / owner"
     agents ||--o{ routes : "built_by"
@@ -238,6 +286,10 @@ erDiagram
     locations ||--o{ routes : "from / to"
     locations ||--o{ structures : "location_id"
     locations ||--o{ events : "location_id"
+    simulation_runs ||--o{ operator_actions : "run_id"
+    agents ||--o{ social_constructs : "founded_by"
+    agents ||--o{ deception_records : "deceiver"
+    agents ||--o{ reputation_events : "subject / observer"
 ```
 
 ---
@@ -256,14 +308,15 @@ erDiagram
 
 ### LLM Strategy
 
-| Backend | Use Case | Cost |
-|---|---|---|
-| **DeepSeek** | Default -- routine agent decisions | Low |
-| **OpenAI (cheap)** | Alternative default | Low |
-| **Anthropic** | Escalation -- discoveries, complex social interactions | Medium |
-| **Ollama** | Offline / fallback | Free (hardware only) |
+Three-tier optimization minimizes cost while preserving decision quality:
 
-All backends are HTTP REST. Swapping is a config change.
+| Tier | Backend | Use Case | Cost |
+|---|---|---|---|
+| **Bypass** | Rule Engine | Survival actions (eat, rest, drink), night cycle sleep | Free |
+| **Routine** | OpenAI (nano/mini) | Low-complexity decisions, solo survival, simple interactions | Low |
+| **Escalation** | Anthropic (Haiku) | High-complexity decisions: discoveries, conflict, governance, social dynamics | Medium |
+
+A **complexity scorer** analyzes each tick's perception payload (nearby agents, messages, weather, notifications) and routes to the appropriate backend. Routine survival ticks bypass LLM entirely.
 
 ---
 
@@ -274,7 +327,7 @@ emergence/
 ├── .project/                       # Design documentation
 │   ├── prd.md                      #   Product requirements & vision
 │   ├── tech-stack.md               #   Technology decisions & rationale
-│   ├── build-plan.md               #   137 tasks across 6 phases (88% complete)
+│   ├── build-plan.md               #   174 tasks across 7 phases
 │   ├── data-schemas.md             #   Canonical type definitions
 │   ├── agent-system.md             #   Agent runtime specification
 │   ├── world-engine.md             #   World Engine technical design
@@ -285,20 +338,20 @@ emergence/
 │   ├── emergence-types/            #   Shared types + ts-rs TypeScript generation
 │   │   ├── src/                    #     Rust type definitions
 │   │   └── bindings/               #     Auto-generated TypeScript interfaces
-│   ├── emergence-core/             #   Tick cycle, clock, perception, decisions
+│   ├── emergence-core/             #   Tick cycle, clock, perception, decisions, feasibility, operator state
 │   ├── emergence-world/            #   Geography, environment, farming, structures
-│   ├── emergence-agents/           #   Agent state, vitals, actions, social, trade
+│   ├── emergence-agents/           #   Agent state, vitals, actions, social, trade, theft, combat, deception, diplomacy
 │   ├── emergence-ledger/           #   Central ledger, double-entry bookkeeping
 │   ├── emergence-db/               #   PostgreSQL + Dragonfly data layer
 │   │   └── migrations/             #     SQL schema migrations
-│   ├── emergence-observer/         #   Axum HTTP/WebSocket API for dashboard
-│   └── emergence-runner/           #   Agent Runner binary (LLM orchestration)
+│   ├── emergence-observer/         #   Axum HTTP/WebSocket API + operator control endpoints
+│   └── emergence-runner/           #   Agent Runner binary (LLM orchestration, rule engine, complexity routing)
 │
 ├── observer/                       # React Observer Dashboard
 │   └── src/
 │       ├── components/             #   WorldMap, AgentInspector, EconomyMonitor,
 │       │                           #   SocialGraph, Timeline, PopulationTracker,
-│       │                           #   DiscoveryLog
+│       │                           #   DiscoveryLog, OperatorControls
 │       ├── hooks/                  #   useApi, useWebSocket
 │       ├── styles/                 #   Tailwind v4 design system
 │       │   ├── theme.css           #     Entry point
@@ -349,6 +402,21 @@ REFLECT   →  Update memory based on outcome
 | **Social Graph** | Relationships with other agents (trust scores, interaction history) |
 | **Vitals** | Energy, health, hunger -- depleted by actions, restored by food and rest |
 
+### Open Action System
+
+Agents are not limited to a fixed action menu. Beyond the base mechanical catalog (gather, build, trade, rest, etc.), agents can propose **freeform actions** -- novel behaviors described in natural language with intent and target fields. The World Engine evaluates each proposal for physical plausibility using a rule-based feasibility checker with LLM fallback for ambiguous cases.
+
+This means agents can steal, attack, intimidate, propose alliances, vote, marry, divorce, conspire, pray -- or invent entirely new behaviors the system hasn't seen before.
+
+### Conflict & Diplomacy
+
+| System | Description |
+|---|---|
+| **Theft** | Stealth vs alertness checks, inventory transfer, detection mechanics, relationship damage |
+| **Combat** | Power calculations (health, aggression, tools, allies), damage resolution, looting, death |
+| **Deception** | Ground truth vs stated information, lie history, deterministic + probabilistic discovery |
+| **Diplomacy** | Alliances, conflicts, treaties, tribute -- full lifecycle between agents or groups |
+
 ### Reproduction
 
 Two agents with high mutual trust can reproduce, spawning a child with blended personality, inherited knowledge, zero resources, and a dependency period. Population caps prevent runaway growth.
@@ -370,7 +438,7 @@ Every resource movement is recorded in a **double-entry ledger**. Conservation l
 
 ## Observer Dashboard
 
-A read-only web dashboard served on the host network (invisible to agents):
+A web dashboard served on the host network (invisible to agents):
 
 | Panel | Description |
 |---|---|
@@ -381,6 +449,7 @@ A read-only web dashboard served on the host network (invisible to agents):
 | **Timeline** | Scrollable event history, filterable by agent/type/region |
 | **Population Tracker** | Births, deaths, population curves, average lifespan |
 | **Discovery Log** | Knowledge milestones: *"Agent_012 discovered AGRICULTURE at tick 892"* |
+| **Operator Controls** | Pause/resume, variable tick speed (6 presets), event injection, emergency stop, simulation status + countdown |
 
 ---
 
@@ -393,7 +462,7 @@ This simulation runs in a fully isolated environment. Agents cannot escape.
 - Seccomp profiles -- dangerous syscalls blocked
 - Read-only filesystem inside agent containers
 - No Docker socket exposure
-- Observer is one-way -- reads from event store, never writes back
+- Observer controls are one-way operator-to-engine (pause, speed, inject events) -- never influences agent decisions
 - Host-level monitoring for breakout indicators and anomalous behavior
 
 ---
@@ -406,7 +475,7 @@ This simulation runs in a fully isolated environment. Agents cannot escape.
 - Node.js or Bun (for Observer)
 - Docker + Docker Compose
 - PostgreSQL 18+
-- An LLM API key (DeepSeek, OpenAI, or Anthropic)
+- An LLM API key (OpenAI and/or Anthropic)
 
 ### Setup
 
@@ -470,11 +539,12 @@ Phase 2: Primitive World     █████████████████
 Phase 3: Society             ████████████████████  100%
 Phase 4: Complexity          ████████████████████  100%
 Phase 5: Scale & Research    ░░░░░░░░░░░░░░░░░░░░    0%
+Phase 6: Open World          ██████████████░░░░░░   51%
 ──────────────────────────────────────────────────────
-Overall                      █████████████████░░░   88%
+Overall                      ████████████████░░░░   78%
 ```
 
-121 of 137 tasks complete. Phases 0-4 are done. Phase 5 (performance, experiments, world events) is next.
+140 of 174 tasks complete. Phases 0-4 done. Phase 6.1-6.3 done (bounded simulations, operator controls, LLM routing, open action system, conflict, diplomacy). Phase 6.4+ and Phase 5 remain.
 
 ---
 
@@ -490,8 +560,16 @@ These are the questions this project exists to explore:
 6. Does inequality emerge? How quickly? Does it self-correct or compound?
 7. What happens when you inject disruption? (Resource shock, plague, new technology)
 8. Do different personality distributions produce different civilizations?
-9. Do they develop religion or mythology?
+9. Do they develop religion or mythology? Do schisms form?
 10. How does their history compare to human history?
+11. Do agents develop marriage and family structures, or do alternative bonding patterns emerge?
+12. Does crime emerge naturally? Do agents self-police or develop centralized justice?
+13. Do agents lie strategically? How does deception affect social trust over time?
+14. Do economic systems emerge -- capitalism, communism, barter networks, something novel?
+15. Does diplomacy prevent wars, or merely delay them?
+16. Can a 24-hour bounded run produce recognizable civilization stages?
+17. What percentage of decisions can be automated without losing emergent complexity?
+18. Do agents invent things we didn't anticipate?
 
 ---
 

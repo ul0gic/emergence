@@ -14,12 +14,14 @@
 //! Every agent gets one decision per tick. If the LLM fails or times out,
 //! the runner submits `NoAction` so the agent never misses a tick.
 
+mod complexity;
 mod config;
 mod error;
 mod llm;
 mod nats;
 mod parse;
 mod prompt;
+mod rule_engine;
 mod runner;
 
 use tracing::info;
@@ -81,23 +83,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "primary LLM backend configured"
     );
 
-    let secondary = config.secondary_backend.as_ref().map(|cfg| {
+    let escalation = config.secondary_backend.as_ref().map(|cfg| {
         let backend = create_backend(cfg);
         info!(
             backend = backend.name(),
             model = cfg.model,
-            "secondary LLM backend configured"
+            "escalation LLM backend configured"
         );
         backend
     });
 
     // Build and run the agent runner
+    info!(
+        routine_action_bypass = config.routine_action_bypass,
+        night_cycle_skip = config.night_cycle_skip,
+        complexity_routing_enabled = config.complexity_routing_enabled,
+        "decision optimization configuration"
+    );
+
     let agent_runner = AgentRunner::new(
         nats,
         prompt_engine,
         primary,
-        secondary,
+        escalation,
         config.decision_timeout,
+        config.routine_action_bypass,
+        config.night_cycle_skip,
+        config.complexity_routing_enabled,
     );
 
     info!("agent runner initialized, entering decision loop");

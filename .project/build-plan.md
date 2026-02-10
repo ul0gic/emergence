@@ -56,8 +56,9 @@ Phase 2: Primitive World         [███████████████�
 Phase 3: Society                 [████████████████████] 100%  ✅
 Phase 4: Complexity              [████████████████████] 100%  ✅
 Phase 5: Scale & Research        [░░░░░░░░░░░░░░░░░░░░]   0%  ⬜
+Phase 6: Open World & Emergence  [███░░░░░░░░░░░░░░░░░]  16%  🔄
 ─────────────────────────────────────────────────────────────
-Overall Progress                 [████████████████████]  88%
+Overall Progress                 [██████████████░░░░░░]  73%
 ```
 
 | Phase | Tasks | Completed | Blocked | Deferred | Progress |
@@ -68,7 +69,8 @@ Overall Progress                 [███████████████�
 | Phase 3: Society | 24 | 24 | 0 | 0 | 100% |
 | Phase 4: Complexity | 20 | 20 | 0 | 0 | 100% |
 | Phase 5: Scale & Research | 16 | 0 | 0 | 0 | 0% |
-| **Total** | **137** | **121** | **0** | **0** | **88%** |
+| Phase 6: Open World & Emergence | 37 | 6 | 0 | 0 | 16% |
+| **Total** | **174** | **127** | **0** | **0** | **73%** |
 
 ---
 
@@ -423,6 +425,79 @@ Overall Progress                 [███████████████�
 
 ---
 
+## Phase 6: Open World & Emergence
+
+> Open-ended action system, social construct detection, cultural emergence, operator controls. The simulation becomes a true sandbox.
+
+### 6.1 Bounded Simulation & Operator Controls
+
+| Status | Task | Description |
+|--------|------|-------------|
+| ✅ | 6.1.1 | Implement hard simulation time limit: `max_ticks` and `max_real_time_seconds` config fields, clean shutdown with final world snapshot |
+| ✅ | 6.1.2 | Implement pause/resume: operator can halt tick loop and resume, full state preserved in Dragonfly |
+| ✅ | 6.1.3 | Implement variable tick speed: operator-adjustable tick interval via runtime API |
+| ✅ | 6.1.4 | Implement operator REST API: Axum endpoints for pause, resume, set_speed, get_status, inject_event (authenticated, separate from agent NATS channels) |
+| ✅ | 6.1.5 | Implement observer operator controls panel: React UI for simulation management (pause, speed slider, countdown timer, event injection form) |
+| ✅ | 6.1.6 | Implement simulation end sequence: final world snapshot, summary report generation, observer switches to replay/analysis mode |
+| ⬜ | 6.1.7 | **BUILD CHECK** — 24-hour bounded simulation runs to completion, operator controls functional from observer |
+
+### 6.2 Smart Tick Speed & LLM Routing
+
+| Status | Task | Description |
+|--------|------|-------------|
+| ✅ | 6.2.1 | Implement routine action fast-path: rule-based decision engine for obvious survival actions (eat when starving, rest when exhausted) — bypasses LLM call entirely |
+| ✅ | 6.2.2 | Implement tick complexity scoring: rate each agent's decision complexity per tick (solo survival = low, social interaction = medium, conflict/discovery = high) |
+| ✅ | 6.2.3 | Implement dynamic LLM backend selection: route low-complexity decisions to cheap/fast model, high-complexity to capable model |
+| ✅ | 6.2.4 | Implement night cycle optimization: sleeping/resting agents skip LLM call, tick resolves in milliseconds for idle agents |
+| ⬜ | 6.2.5 | **BUILD CHECK** — Variable-speed ticks use appropriate backends, routine ticks complete in <500ms, 24-hour run achieves 30,000+ ticks |
+
+### 6.3 Open Action System
+
+| Status | Task | Description |
+|--------|------|-------------|
+| ✅ | 6.3.1 | Implement freeform action proposal: agents can submit novel actions as structured text beyond the base action catalog, with intent and target fields |
+| ✅ | 6.3.2 | Implement action feasibility evaluator: World Engine evaluates novel actions for physical plausibility (location, resources, knowledge) using rule engine with LLM fallback for ambiguous cases |
+| ✅ | 6.3.3 | Implement theft/stealing: take resources from co-located agent, stealth vs alertness check, emit TheftOccurred/TheftFailed events, victim notified |
+| ✅ | 6.3.4 | Implement deception tracking: record ground truth vs stated information in agent messages, maintain lie history per agent, enable discovery of deceptions |
+| ✅ | 6.3.5 | Implement conflict/combat system: physical confrontation between agents with health/energy consequences, aggression and skill modifiers, injury and death possible |
+| ✅ | 6.3.6 | Implement diplomacy actions: propose_alliance, declare_conflict, negotiate_treaty, offer_tribute between agents or groups |
+| ✅ | 6.3.7 | **BUILD CHECK** — Agents propose and execute novel actions, theft/combat/diplomacy resolve correctly with events emitted |
+
+### 6.4 Social Construct Detection & Tracking
+
+| Status | Task | Description |
+|--------|------|-------------|
+| ⬜ | 6.4.1 | Design social construct data model: generic construct with name, category (religion, governance, economic, family, cultural), adherents, founding tick, evolution history |
+| ⬜ | 6.4.2 | Implement belief/narrative detection: analyze agent communications for repeated shared themes using LLM classifier, cluster into belief systems, track adherent counts |
+| ⬜ | 6.4.3 | Implement governance structure tracking: detect leadership claims, voting patterns, rule declarations, authority challenges, classify government type |
+| ⬜ | 6.4.4 | Implement family & relationship type tracking: detect partnerships/marriages, parent-child bonds, build lineage trees, track family units as social entities |
+| ⬜ | 6.4.5 | Implement economic system detection: detect currency adoption, employment, taxation, lending, market dynamics beyond barter, classify economic model |
+| ⬜ | 6.4.6 | Implement crime & justice tracking: detect norm violations (theft, deception, violence), punishment events, policing patterns (self-policing vs centralized) |
+| ⬜ | 6.4.7 | Implement social construct observer panels: religion map, governance diagram, family trees, economic flow visualization, crime statistics |
+| ⬜ | 6.4.8 | **BUILD CHECK** — Emergent social constructs detected, categorized, tracked over time, and visualized in observer dashboard |
+
+### 6.5 Extended Knowledge & Innovation
+
+| Status | Task | Description |
+|--------|------|-------------|
+| ⬜ | 6.5.1 | Extend tech tree through Industrial era: add ~50 knowledge items covering advanced agriculture, engineering, science, medicine, manufacturing with prerequisite chains |
+| ⬜ | 6.5.2 | Implement open innovation proposals: agents can propose inventions by combining existing knowledge, World Engine evaluates prerequisite plausibility and registers new knowledge items |
+| ⬜ | 6.5.3 | Implement cultural knowledge: non-mechanical discoveries (philosophy, art, music, mythology, ethics) that influence agent behavior and social cohesion but don't unlock mechanical actions |
+| ⬜ | 6.5.4 | Implement technology diffusion tracking: measure how fast knowledge spreads through population, adoption curves, resistance to new ideas, knowledge hoarding |
+| ⬜ | 6.5.5 | **BUILD CHECK** — Agents discover knowledge beyond Bronze Age, propose innovations, cultural knowledge emerges and spreads |
+
+### 6.6 Advanced Communication & Reputation
+
+| Status | Task | Description |
+|--------|------|-------------|
+| ⬜ | 6.6.1 | Implement private/secret communication: whisper (only target receives), conspire (group-private channel), vs public broadcast — others cannot observe private messages |
+| ⬜ | 6.6.2 | Implement persuasion mechanics: agents can attempt to change others' beliefs, goals, or allegiances, success influenced by honesty trait, relationship score, and reputation |
+| ⬜ | 6.6.3 | Implement reputation system: agent actions build observable reputation (generous, thief, liar, leader, warrior), visible in perception to agents with prior interaction history |
+| ⬜ | 6.6.4 | Implement propaganda: persistent public declarations at locations that influence newcomers' perception of local culture and norms |
+| ⬜ | 6.6.5 | **BUILD CHECK** — Private communication functional, persuasion resolves with personality influence, reputation tracks and appears in perception |
+
+---
+
 ## Changelog Reference
 
 See `.project/changelog.md` for detailed version history.
@@ -436,6 +511,10 @@ See `.project/changelog.md` for detailed version history.
 - Dragonfly for hot state, PostgreSQL for cold state — CQRS pattern
 - NATS for messaging — cleanly separated from state layer
 - Types defined once in Rust, generated to TypeScript — single source of truth
+- Two-layer architecture: hard physics (World Engine) + soft culture (emergent, agent-driven)
+- Bounded experiments: 24-hour real-time limit by default, full history preserved for replay
+- Open action system: base mechanical catalog + freeform novel action proposals
+- Operator controls: one-way command channel from Observer to World Engine via Axum REST API
 
 ### Key Technical References
 - **Data Schemas:** `.project/data-schemas.md` — canonical type definitions
@@ -444,12 +523,26 @@ See `.project/changelog.md` for detailed version history.
 - **Tech Stack:** `.project/tech-stack.md` — technology choices and rationale
 
 ### Known Constraints
-- LLM costs scale linearly with agent count — use local models for routine decisions
+- LLM costs scale linearly with agent count — use routine action bypass and night cycle skip to minimize calls
 - Agent decision timeout (8s default) sets minimum tick duration floor
 - Dragonfly memory limits agent count ceiling — snapshot and trim periodically
 
+### Phase 6 Foundation Work Completed (2026-02-09)
+
+The following prerequisite foundation work was completed to support Phase 6 features:
+
+- **Config updates:** Added `simulation` section (max_ticks, max_real_time_seconds, end_condition), `operator` section (api_enabled, api_auth_token), and LLM optimization fields (routine_action_bypass, night_cycle_skip, cost_tracking) to `emergence-config.yaml`
+- **Environment variables:** Updated `.env.example` to remove Ollama, clarify OpenAI as primary and Anthropic as escalation, added cost-effective model guidance, added `OPERATOR_API_TOKEN`
+- **Tech stack documentation:** Updated `.project/tech-stack.md` to remove Ollama, document two-layer architecture (hard physics + soft culture), document bounded 24-hour simulation runs, update LLM backend strategy table
+- **Database migrations:**
+  - `0005_simulation_runs.sql` — `simulation_runs` and `operator_actions` tables with enums and indexes (supports 6.1)
+  - `0006_social_constructs.sql` — `social_constructs` and `construct_memberships` tables with enums and indexes (supports 6.4)
+  - `0007_deception_and_reputation.sql` — `deception_records` and `reputation_events` tables with indexes (supports 6.3, 6.6)
+  - `0008_event_type_expansion.sql` — 17 new `event_type` enum values for theft, combat, deception, diplomacy, social constructs, reputation, and operator lifecycle events (supports 6.1, 6.3, 6.4, 6.6)
+- **Data schemas:** Updated `.project/data-schemas.md` with SimulationRun, OperatorAction, SocialConstruct, ConstructMembership, DeceptionRecord, ReputationEvent schemas; 8 new action types (Steal, Attack, Propose, Vote, Marry, Divorce, Conspire, Pray); 17 new event types with detail schemas
+
 ---
 
-*Last updated: 2026-02-08*
-*Current Phase: Phase 5 — Scale & Research*
-*Next Milestone: Performance profiling for 100+ agents (Task 5.1.5)*
+*Last updated: 2026-02-09*
+*Current Phase: Phase 5/6 — Scale & Research + Open World*
+*Next Milestone: Bounded simulation & operator controls (Task 6.1.7)*

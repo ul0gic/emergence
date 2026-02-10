@@ -191,7 +191,9 @@ pub fn verify_conservation_strict(tick: u64, entries: &[LedgerEntry]) -> Conserv
             | LedgerEntryType::Build
             | LedgerEntryType::Salvage
             | LedgerEntryType::Drop
-            | LedgerEntryType::Pickup => {}
+            | LedgerEntryType::Pickup
+            | LedgerEntryType::Theft
+            | LedgerEntryType::CombatLoot => {}
         }
     }
 

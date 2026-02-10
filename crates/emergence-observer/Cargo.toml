@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 emergence-types = { path = "../emergence-types" }
+emergence-core = { path = "../emergence-core" }
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true

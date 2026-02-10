@@ -2,13 +2,24 @@
 //!
 //! Orchestrates the full decision loop per `agent-system.md` section 6.1:
 //! 1. Receive perception payload
-//! 2. Render prompt from templates
-//! 3. Call LLM backend (with timeout and fallback)
-//! 4. Parse structured action from response
-//! 5. Submit action to World Engine via NATS
+//! 2. Check rule engine for routine actions (fast-path bypass)
+//! 3. Score decision complexity (task 6.2.2)
+//! 4. Select LLM backend based on complexity (task 6.2.3)
+//! 5. Render prompt from templates
+//! 6. Call LLM backend (with timeout and fallback)
+//! 7. Parse structured action from response
+//! 8. Submit action to World Engine via NATS
 //!
 //! Timeout handling ensures an agent never misses a tick -- if the LLM
 //! call exceeds the deadline, a `NoAction` is submitted immediately.
+//!
+//! The rule engine (task 6.2.1) and night cycle optimization (task 6.2.4)
+//! bypass the LLM entirely for obvious survival decisions, reducing cost
+//! and latency for routine ticks.
+//!
+//! When complexity routing is enabled (task 6.2.3), high-complexity
+//! decisions are routed to the escalation backend first, while
+//! low/medium decisions use the cheap primary backend.
 
 use std::time::Duration;
 
@@ -20,39 +31,59 @@ use futures::StreamExt;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
+use crate::complexity::{score_complexity, ComplexityLevel};
 use crate::error::RunnerError;
 use crate::llm::LlmBackend;
 use crate::nats::NatsClient;
 use crate::parse::parse_llm_response;
 use crate::prompt::PromptEngine;
+use crate::rule_engine::{self, DecisionSource};
 
 /// The agent decision runner.
 ///
 /// Holds references to all components needed for the decision pipeline:
-/// NATS client, prompt engine, and LLM backends (primary + optional fallback).
+/// NATS client, prompt engine, LLM backends (primary + optional
+/// escalation), and configuration flags for rule engine bypass and
+/// complexity-based routing.
 pub struct AgentRunner {
     nats: NatsClient,
     prompt_engine: PromptEngine,
     primary_backend: LlmBackend,
-    secondary_backend: Option<LlmBackend>,
+    escalation_backend: Option<LlmBackend>,
     decision_timeout: Duration,
+    /// When true, the rule engine checks for obvious survival actions
+    /// before calling the LLM.
+    routine_action_bypass: bool,
+    /// When true, agents at night with low energy or no activity
+    /// auto-rest without an LLM call.
+    night_cycle_skip: bool,
+    /// When true, high-complexity decisions are routed to the escalation
+    /// backend first instead of the primary backend.
+    complexity_routing_enabled: bool,
 }
 
 impl AgentRunner {
     /// Create a new agent runner with all required components.
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         nats: NatsClient,
         prompt_engine: PromptEngine,
         primary_backend: LlmBackend,
-        secondary_backend: Option<LlmBackend>,
+        escalation_backend: Option<LlmBackend>,
         decision_timeout: Duration,
+        routine_action_bypass: bool,
+        night_cycle_skip: bool,
+        complexity_routing_enabled: bool,
     ) -> Self {
         Self {
             nats,
             prompt_engine,
             primary_backend,
-            secondary_backend,
+            escalation_backend,
             decision_timeout,
+            routine_action_bypass,
+            night_cycle_skip,
+            complexity_routing_enabled,
         }
     }
 
@@ -109,13 +140,54 @@ impl AgentRunner {
 
     /// Execute the full decision pipeline for a single agent tick.
     ///
-    /// Applies timeout to the entire pipeline. If the deadline is exceeded,
-    /// returns a `NoAction` request so the agent does not miss the tick.
+    /// First checks the rule engine for routine actions (fast-path) and
+    /// night cycle optimization. If neither applies, falls through to the
+    /// LLM pipeline with timeout. If the deadline is exceeded, returns a
+    /// `NoAction` request so the agent does not miss the tick.
     async fn decide(&self, tick: u64, perception: &Perception) -> ActionRequest {
         let agent_id = perception.self_state.id;
 
+        // Fast-path: night cycle optimization (task 6.2.4)
+        // Checked first because sleeping agents should not even reach the
+        // routine action rules -- they just rest.
+        if self.night_cycle_skip
+            && let Some(action) = rule_engine::try_night_cycle_rest(perception)
+        {
+            info!(
+                agent_id = %agent_id,
+                tick = tick,
+                action_type = ?action.action_type,
+                decision_source = DecisionSource::NightCycle.as_str(),
+                "decision bypassed LLM (night cycle)"
+            );
+            return action;
+        }
+
+        // Fast-path: routine action bypass (task 6.2.1)
+        if self.routine_action_bypass
+            && let Some(action) = rule_engine::try_routine_action(perception)
+        {
+            info!(
+                agent_id = %agent_id,
+                tick = tick,
+                action_type = ?action.action_type,
+                decision_source = DecisionSource::RuleEngine.as_str(),
+                "decision bypassed LLM (routine action)"
+            );
+            return action;
+        }
+
+        // Full LLM pipeline with timeout
         match timeout(self.decision_timeout, self.decide_inner(tick, perception)).await {
-            Ok(Ok(action)) => action,
+            Ok(Ok(action)) => {
+                debug!(
+                    agent_id = %agent_id,
+                    tick = tick,
+                    decision_source = DecisionSource::Llm.as_str(),
+                    "decision made via LLM"
+                );
+                action
+            }
             Ok(Err(e)) => {
                 warn!(
                     agent_id = %agent_id,
@@ -139,9 +211,9 @@ impl AgentRunner {
 
     /// Inner decision logic (without timeout wrapper).
     ///
-    /// 1. Render prompt
-    /// 2. Call primary backend
-    /// 3. If primary fails, try secondary backend (fallback chain)
+    /// 1. Score decision complexity
+    /// 2. Serialize perception and render prompt
+    /// 3. Call LLM with complexity-aware backend routing
     /// 4. Parse response into action
     async fn decide_inner(
         &self,
@@ -150,68 +222,34 @@ impl AgentRunner {
     ) -> Result<ActionRequest, RunnerError> {
         let agent_id = perception.self_state.id;
 
-        // Serialize perception to JSON for template rendering
-        let perception_json = serde_json::to_value(perception)?;
-
-        // Render prompt
-        let prompt = self.prompt_engine.render(&perception_json)?;
-
-        // Try primary backend
-        let raw_response = match self.primary_backend.complete(&prompt).await {
-            Ok(response) => {
-                debug!(
-                    agent_id = %agent_id,
-                    backend = self.primary_backend.name(),
-                    response_len = response.len(),
-                    "primary backend responded"
-                );
-                response
-            }
-            Err(primary_err) => {
-                warn!(
-                    agent_id = %agent_id,
-                    backend = self.primary_backend.name(),
-                    error = %primary_err,
-                    "primary backend failed, trying fallback"
-                );
-
-                // Try secondary backend if available
-                if let Some(secondary) = &self.secondary_backend {
-                    match secondary.complete(&prompt).await {
-                        Ok(response) => {
-                            info!(
-                                agent_id = %agent_id,
-                                backend = secondary.name(),
-                                "secondary backend responded after primary failure"
-                            );
-                            response
-                        }
-                        Err(secondary_err) => {
-                            warn!(
-                                agent_id = %agent_id,
-                                backend = secondary.name(),
-                                error = %secondary_err,
-                                "secondary backend also failed, returning NoAction"
-                            );
-                            return Ok(no_action_request(agent_id, tick));
-                        }
-                    }
-                } else {
-                    warn!(
-                        agent_id = %agent_id,
-                        "no secondary backend configured, returning NoAction"
-                    );
-                    return Ok(no_action_request(agent_id, tick));
-                }
-            }
-        };
-
-        // Parse the response
-        let decision = parse_llm_response(&raw_response);
+        // Step 1: Score complexity
+        let complexity = score_complexity(perception);
 
         debug!(
             agent_id = %agent_id,
             tick = tick,
+            complexity = %complexity,
+            "decision complexity scored"
+        );
+
+        // Step 2: Serialize perception to JSON for template rendering
+        let perception_json = serde_json::to_value(perception)?;
+
+        // Step 3: Render prompt
+        let prompt = self.prompt_engine.render(&perception_json)?;
+
+        // Step 4: Call LLM with complexity-aware backend selection
+        let raw_response =
+            self.call_with_routing(agent_id, complexity, &prompt)
+                .await?;
+
+        // Step 5: Parse the response
+        let decision = parse_llm_response(&raw_response);
+
+        info!(
+            agent_id = %agent_id,
+            tick = tick,
+            complexity = %complexity,
             action_type = ?decision.action_type,
             reasoning = ?decision.reasoning,
             "decision parsed"
@@ -224,6 +262,154 @@ impl AgentRunner {
             parameters: decision.parameters,
             submitted_at: Utc::now(),
         })
+    }
+
+    /// Call the LLM with complexity-aware backend routing and fallback.
+    ///
+    /// When complexity routing is **enabled** and an escalation backend
+    /// is configured:
+    ///
+    /// - `Low` / `Medium` complexity: primary -> escalation -> error
+    /// - `High` complexity: escalation -> primary -> error
+    ///
+    /// When complexity routing is **disabled** (or no escalation backend):
+    ///
+    /// - All complexity levels: primary -> escalation -> error
+    ///
+    /// The fallback chain always tries both backends before giving up.
+    async fn call_with_routing(
+        &self,
+        agent_id: AgentId,
+        complexity: ComplexityLevel,
+        prompt: &crate::prompt::RenderedPrompt,
+    ) -> Result<String, RunnerError> {
+        let use_escalation_first = self.complexity_routing_enabled
+            && complexity == ComplexityLevel::High
+            && self.escalation_backend.is_some();
+
+        if use_escalation_first {
+            // High complexity: try escalation backend first, fall back to primary.
+            self.call_escalation_then_primary(agent_id, prompt).await
+        } else {
+            // Low/Medium complexity (or routing disabled): primary first.
+            self.call_primary_then_escalation(agent_id, prompt).await
+        }
+    }
+
+    /// Try primary backend first, then escalation backend as fallback.
+    async fn call_primary_then_escalation(
+        &self,
+        agent_id: AgentId,
+        prompt: &crate::prompt::RenderedPrompt,
+    ) -> Result<String, RunnerError> {
+        match self.primary_backend.complete(prompt).await {
+            Ok(response) => {
+                debug!(
+                    agent_id = %agent_id,
+                    backend = self.primary_backend.name(),
+                    response_len = response.len(),
+                    "primary backend responded"
+                );
+                Ok(response)
+            }
+            Err(primary_err) => {
+                warn!(
+                    agent_id = %agent_id,
+                    backend = self.primary_backend.name(),
+                    error = %primary_err,
+                    "primary backend failed, trying escalation fallback"
+                );
+                self.try_escalation_fallback(agent_id, prompt).await
+            }
+        }
+    }
+
+    /// Try escalation backend first, then primary backend as fallback.
+    async fn call_escalation_then_primary(
+        &self,
+        agent_id: AgentId,
+        prompt: &crate::prompt::RenderedPrompt,
+    ) -> Result<String, RunnerError> {
+        if let Some(escalation) = &self.escalation_backend {
+            match escalation.complete(prompt).await {
+                Ok(response) => {
+                    info!(
+                        agent_id = %agent_id,
+                        backend = escalation.name(),
+                        response_len = response.len(),
+                        "escalation backend responded (high complexity)"
+                    );
+                    return Ok(response);
+                }
+                Err(escalation_err) => {
+                    warn!(
+                        agent_id = %agent_id,
+                        backend = escalation.name(),
+                        error = %escalation_err,
+                        "escalation backend failed, falling back to primary"
+                    );
+                }
+            }
+        }
+
+        // Fall back to primary
+        match self.primary_backend.complete(prompt).await {
+            Ok(response) => {
+                debug!(
+                    agent_id = %agent_id,
+                    backend = self.primary_backend.name(),
+                    response_len = response.len(),
+                    "primary backend responded (escalation fallback)"
+                );
+                Ok(response)
+            }
+            Err(primary_err) => {
+                warn!(
+                    agent_id = %agent_id,
+                    backend = self.primary_backend.name(),
+                    error = %primary_err,
+                    "both backends failed"
+                );
+                Err(primary_err)
+            }
+        }
+    }
+
+    /// Try the escalation backend as a fallback (after primary failure).
+    async fn try_escalation_fallback(
+        &self,
+        agent_id: AgentId,
+        prompt: &crate::prompt::RenderedPrompt,
+    ) -> Result<String, RunnerError> {
+        if let Some(escalation) = &self.escalation_backend {
+            match escalation.complete(prompt).await {
+                Ok(response) => {
+                    info!(
+                        agent_id = %agent_id,
+                        backend = escalation.name(),
+                        "escalation backend responded after primary failure"
+                    );
+                    Ok(response)
+                }
+                Err(escalation_err) => {
+                    warn!(
+                        agent_id = %agent_id,
+                        backend = escalation.name(),
+                        error = %escalation_err,
+                        "escalation backend also failed"
+                    );
+                    Err(escalation_err)
+                }
+            }
+        } else {
+            warn!(
+                agent_id = %agent_id,
+                "no escalation backend configured"
+            );
+            Err(RunnerError::LlmBackend(
+                "primary failed and no escalation backend configured".to_owned(),
+            ))
+        }
     }
 }
 
@@ -423,5 +609,32 @@ mod tests {
         assert_eq!(action.tick, 42);
         assert_eq!(action.action_type, ActionType::NoAction);
         assert!(matches!(action.parameters, ActionParameters::NoAction));
+    }
+
+    #[test]
+    fn complexity_scoring_solo_perception() {
+        let perception = test_perception();
+        let complexity = score_complexity(&perception);
+        // Solo survival perception with no agents, no messages, clear weather
+        // should be Low complexity.
+        assert_eq!(complexity, ComplexityLevel::Low);
+    }
+
+    #[test]
+    fn complexity_scoring_social_perception() {
+        let mut perception = test_perception();
+        // Add agents and social actions to push into Medium.
+        perception.surroundings.agents_here = vec![
+            emergence_types::VisibleAgent {
+                name: "Neighbor".to_owned(),
+                relationship: "friendly (0.5)".to_owned(),
+                activity: "idle".to_owned(),
+            },
+        ];
+        perception.available_actions.push("communicate".to_owned());
+
+        let complexity = score_complexity(&perception);
+        // 1 (agent) + 2 (social actions) = 3 => Medium.
+        assert_eq!(complexity, ComplexityLevel::Medium);
     }
 }

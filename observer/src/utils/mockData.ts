@@ -9,6 +9,7 @@ import type {
   AgentListItem,
   Event,
   LocationListItem,
+  OperatorStatus,
   TickBroadcast,
   WorldSnapshot,
 } from "../types/generated/index.ts";
@@ -679,3 +680,21 @@ export function generateMockTickHistory(count: number): TickBroadcast[] {
 
   return history;
 }
+
+// ---------------------------------------------------------------------------
+// Mock operator status
+// ---------------------------------------------------------------------------
+
+export const MOCK_OPERATOR_STATUS: OperatorStatus = {
+  tick: 210,
+  elapsed_seconds: 3720,
+  max_ticks: 172800,
+  max_real_time_seconds: 86400,
+  paused: false,
+  tick_interval_ms: 500,
+  agents_alive: 9,
+  agents_dead: 1,
+  era: "Primitive",
+  season: "Autumn",
+  uptime_seconds: 3720,
+};

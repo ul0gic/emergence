@@ -6,4 +6,4 @@
  * Used to track why a relationship evolved, enabling richer social
  * dynamics and event logging.
  */
-export type InteractionCause = "Trade" | "TradeFailed" | "Teaching" | "Communication" | "Conflict";
+export type InteractionCause = "Trade" | "TradeFailed" | "Teaching" | "Communication" | "Conflict" | "Theft" | "Intimidation";

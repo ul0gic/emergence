@@ -339,6 +339,44 @@ export const EventsResponseSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Operator schemas
+// ---------------------------------------------------------------------------
+
+export const InjectedEventTypeSchema = z.enum([
+  "natural_disaster",
+  "resource_boom",
+  "plague",
+  "migration",
+  "technology_gift",
+  "resource_depletion",
+]);
+
+export const OperatorStatusSchema = z.object({
+  tick: z.number(),
+  elapsed_seconds: z.number(),
+  max_ticks: z.number(),
+  max_real_time_seconds: z.number(),
+  paused: z.boolean(),
+  tick_interval_ms: z.number(),
+  agents_alive: z.number(),
+  agents_dead: z.number(),
+  era: z.string(),
+  season: z.string(),
+  uptime_seconds: z.number(),
+});
+
+export const InjectEventRequestSchema = z.object({
+  event_type: InjectedEventTypeSchema,
+  target_region: z.string().optional(),
+  parameters: z.record(z.string(), JsonValueSchema).optional(),
+});
+
+export const OperatorMutationResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+// ---------------------------------------------------------------------------
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
@@ -369,4 +407,12 @@ export function parseEventsResponse(data: unknown): EventsResponse {
 
 export function parseWorldSnapshot(data: unknown) {
   return WorldSnapshotSchema.parse(data);
+}
+
+export function parseOperatorStatus(data: unknown) {
+  return OperatorStatusSchema.parse(data);
+}
+
+export function parseOperatorMutationResponse(data: unknown) {
+  return OperatorMutationResponseSchema.parse(data);
 }

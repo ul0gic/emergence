@@ -112,6 +112,14 @@ All entities use UUID v7 for identifiers (time-ordered for efficient indexing).
 | **Legislate** | Advanced |
 | **Enforce** | Advanced |
 | **Reproduce** | Advanced |
+| **Steal** | Conflict |
+| **Attack** | Conflict |
+| **Propose** | Diplomacy |
+| **Vote** | Diplomacy |
+| **Marry** | Social |
+| **Divorce** | Social |
+| **Conspire** | Social |
+| **Pray** | Cultural |
 | **NoAction** | System |
 
 ### 3.4 Event Types
@@ -142,6 +150,23 @@ All entities use UUID v7 for identifiers (time-ordered for efficient indexing).
 | **WeatherChanged** | Environment | Weather shifted |
 | **SeasonChanged** | Environment | Season transitioned |
 | **LedgerAnomaly** | System | Conservation law violated (alert) |
+| **TheftOccurred** | Conflict | Agent successfully stole from another agent |
+| **TheftFailed** | Conflict | Theft attempt was detected and prevented |
+| **CombatInitiated** | Conflict | Physical confrontation started between agents |
+| **CombatResolved** | Conflict | Combat concluded with outcome |
+| **DeceptionCommitted** | Social | Agent deliberately lied or misled another agent |
+| **DeceptionDiscovered** | Social | A prior deception was uncovered |
+| **AllianceFormed** | Diplomacy | Two or more agents/groups formed an alliance |
+| **AllianceBroken** | Diplomacy | An existing alliance was dissolved |
+| **WarDeclared** | Diplomacy | Formal conflict declared between groups |
+| **TreatyNegotiated** | Diplomacy | Peace or trade agreement reached |
+| **SocialConstructFormed** | Emergence | New emergent social structure detected |
+| **SocialConstructDisbanded** | Emergence | Social structure dissolved |
+| **ReputationChanged** | Social | Agent's observable reputation shifted |
+| **OperatorAction** | System | External operator intervention recorded |
+| **SimulationPaused** | System | Simulation tick loop halted by operator |
+| **SimulationResumed** | System | Simulation tick loop resumed by operator |
+| **SimulationEnded** | System | Simulation terminated (time limit, extinction, or manual) |
 
 ### 3.5 Rejection Reasons
 
@@ -788,6 +813,275 @@ All types flow from Rust definitions:
 | `AgentId` | `AgentId` (type alias to string) | `AgentIdSchema` |
 | `struct Agent` | `interface Agent` | `AgentSchema` |
 | `enum Resource` | `type Resource = "Water" \| "Wood" \| ...` | `ResourceSchema` |
+
+---
+
+## 13. Simulation Run Schemas
+
+### 13.1 SimulationRun
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| **id** | UUID v7 | No | Unique identifier |
+| **name** | String | No | Experiment name |
+| **description** | String | No | Experiment description |
+| **status** | SimulationStatus | No | Lifecycle state |
+| **started_at_tick** | Integer | Yes | First tick of the run |
+| **ended_at_tick** | Integer | Yes | Final tick of the run |
+| **max_ticks** | Integer | No | Hard tick limit (0 = unlimited) |
+| **config** | JSONB | No | Full config snapshot at creation time |
+| **seed** | Integer (i64) | No | RNG seed for deterministic replay |
+| **created_at** | Timestamp | No | Real-world creation time |
+| **completed_at** | Timestamp | Yes | Real-world completion time |
+
+### 13.2 SimulationStatus
+
+| Status | Description |
+|---|---|
+| **Created** | Run configured but not yet started |
+| **Running** | Tick loop is actively executing |
+| **Paused** | Tick loop halted, state preserved |
+| **Completed** | Run finished (time limit, extinction, era reached, or manual stop) |
+| **Failed** | Run terminated due to error |
+
+### 13.3 OperatorAction
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| **id** | UUID v7 | No | Unique identifier |
+| **run_id** | UUID v7 | No | Reference to simulation run |
+| **tick** | Integer | No | Tick when action was issued |
+| **action_type** | OperatorActionType | No | What the operator did |
+| **parameters** | JSONB | No | Action-specific parameters |
+| **created_at** | Timestamp | No | Real-world timestamp |
+
+### 13.4 OperatorActionType
+
+| Type | Description |
+|---|---|
+| **Pause** | Halt the tick loop |
+| **Resume** | Resume the tick loop |
+| **SetSpeed** | Change tick interval (parameters: `{ "tick_interval_ms": 5000 }`) |
+| **InjectEvent** | Insert an external event into the simulation (parameters: event payload) |
+| **EmergencyStop** | Immediately terminate the simulation |
+
+---
+
+## 14. Social Construct Schemas
+
+### 14.1 SocialConstruct
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| **id** | UUID v7 | No | Unique identifier |
+| **name** | String | No | Name of the construct (may be agent-given or system-detected) |
+| **category** | SocialConstructCategory | No | Classification |
+| **description** | String | No | Description of the construct |
+| **founded_at_tick** | Integer | No | Tick when first detected |
+| **founded_by** | AgentId | Yes | Agent who initiated it (if identifiable) |
+| **disbanded_at_tick** | Integer | Yes | Tick when dissolved (null if active) |
+| **adherent_count** | Integer | No | Current number of members |
+| **properties** | JSONB | No | Category-specific attributes |
+| **evolution_history** | JSONB | No | Array of `{ tick, change, old_value, new_value }` entries |
+| **created_at** | Timestamp | No | Real-world creation time |
+
+### 14.2 SocialConstructCategory
+
+| Category | Description | Example Properties |
+|---|---|---|
+| **Religion** | Shared belief system or mythology | deity names, rituals, sacred locations |
+| **Governance** | Leadership and rule-making structure | leader_id, government_type, laws |
+| **Economic** | Economic system beyond barter | currency, tax_rate, trade_agreements |
+| **Family** | Kinship and partnership structure | partners, children, family_name |
+| **Cultural** | Shared practices, art, traditions | customs, stories, taboos |
+
+### 14.3 ConstructMembership
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| **id** | UUID v7 | No | Unique identifier |
+| **construct_id** | UUID v7 | No | Reference to social construct |
+| **agent_id** | AgentId | No | Member agent |
+| **joined_at_tick** | Integer | No | When the agent joined |
+| **left_at_tick** | Integer | Yes | When the agent left (null if active) |
+| **role** | String | No | Role within the construct (e.g., "leader", "member", "priest") |
+| **created_at** | Timestamp | No | Real-world creation time |
+
+---
+
+## 15. Deception & Reputation Schemas
+
+### 15.1 DeceptionRecord
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| **id** | UUID v7 | No | Unique identifier |
+| **tick** | Integer | No | When the deception occurred |
+| **deceiver_id** | AgentId | No | Agent who lied |
+| **target_id** | AgentId | No | Agent who was lied to |
+| **deception_type** | String | No | Category of deception (e.g., "resource_lie", "location_lie", "relationship_lie") |
+| **claimed_info** | JSONB | No | What the deceiver said |
+| **actual_truth** | JSONB | No | What was actually true |
+| **discovered** | Boolean | No | Whether the deception has been uncovered (default: false) |
+| **discovered_at_tick** | Integer | Yes | Tick when discovered |
+| **discovered_by** | AgentId | Yes | Agent who uncovered the deception |
+| **created_at** | Timestamp | No | Real-world creation time |
+
+### 15.2 ReputationEvent
+
+| Field | Type | Nullable | Description |
+|---|---|---|---|
+| **id** | UUID v7 | No | Unique identifier |
+| **tick** | Integer | No | When the action was observed |
+| **subject_id** | AgentId | No | Agent whose reputation changed |
+| **observer_id** | AgentId | No | Agent who observed the action |
+| **action_type** | String | No | What action was observed (e.g., "generous_trade", "theft", "teaching") |
+| **reputation_delta** | Numeric | No | Signed reputation change (positive = good, negative = bad) |
+| **context** | JSONB | No | Action-specific details |
+| **created_at** | Timestamp | No | Real-world creation time |
+
+---
+
+## 16. New Action Parameters
+
+### 16.1 Steal
+
+| Field | Type |
+|---|---|
+| target_agent | AgentId |
+| resource | Resource |
+
+### 16.2 Attack
+
+| Field | Type |
+|---|---|
+| target_agent | AgentId |
+
+### 16.3 Propose
+
+| Field | Type |
+|---|---|
+| proposal_type | String (alliance, treaty, trade_agreement, law) |
+| target_agents | List<AgentId> |
+| terms | JSONB |
+
+### 16.4 Vote
+
+| Field | Type |
+|---|---|
+| proposal_id | UUID |
+| vote | Boolean (approve/reject) |
+
+### 16.5 Marry
+
+| Field | Type |
+|---|---|
+| partner_agent | AgentId |
+
+### 16.6 Divorce
+
+| Field | Type |
+|---|---|
+| partner_agent | AgentId |
+
+### 16.7 Conspire
+
+| Field | Type |
+|---|---|
+| target_agents | List<AgentId> |
+| message | String (max 500 chars) |
+
+### 16.8 Pray
+
+| Field | Type |
+|---|---|
+| construct_id | UUID (nullable, may pray without formal religion) |
+| prayer | String (max 200 chars) |
+
+---
+
+## 17. New Event Details
+
+### 17.1 TheftOccurred / TheftFailed
+
+| Field | Type |
+|---|---|
+| thief_id | AgentId |
+| victim_id | AgentId |
+| resource | Resource |
+| quantity | Integer |
+| detected | Boolean |
+
+### 17.2 CombatInitiated / CombatResolved
+
+| Field | Type |
+|---|---|
+| attacker_id | AgentId |
+| defender_id | AgentId |
+| cause | String |
+| outcome | String (attacker_won, defender_won, draw, fled) |
+| attacker_damage | Integer |
+| defender_damage | Integer |
+
+### 17.3 DeceptionCommitted / DeceptionDiscovered
+
+| Field | Type |
+|---|---|
+| deception_record_id | UUID |
+| deceiver_id | AgentId |
+| target_id | AgentId |
+| deception_type | String |
+
+### 17.4 AllianceFormed / AllianceBroken
+
+| Field | Type |
+|---|---|
+| alliance_members | List<AgentId> |
+| alliance_name | String |
+| reason | String |
+
+### 17.5 WarDeclared / TreatyNegotiated
+
+| Field | Type |
+|---|---|
+| party_a | List<AgentId> |
+| party_b | List<AgentId> |
+| terms | JSONB |
+
+### 17.6 SocialConstructFormed / SocialConstructDisbanded
+
+| Field | Type |
+|---|---|
+| construct_id | UUID |
+| construct_name | String |
+| category | SocialConstructCategory |
+| adherent_count | Integer |
+
+### 17.7 ReputationChanged
+
+| Field | Type |
+|---|---|
+| subject_id | AgentId |
+| observer_id | AgentId |
+| delta | Numeric |
+| cause | String |
+
+### 17.8 OperatorAction
+
+| Field | Type |
+|---|---|
+| operator_action_id | UUID |
+| action_type | OperatorActionType |
+| parameters | JSONB |
+
+### 17.9 SimulationPaused / SimulationResumed / SimulationEnded
+
+| Field | Type |
+|---|---|
+| run_id | UUID |
+| reason | String |
+| final_tick | Integer (SimulationEnded only) |
+| final_population | Integer (SimulationEnded only) |
 
 ---
 

@@ -203,5 +203,9 @@ const fn event_type_to_db(et: EventType) -> &'static str {
         EventType::RuleCreated => "rule_created",
         EventType::EnforcementApplied => "enforcement_applied",
         EventType::LedgerAnomaly => "ledger_anomaly",
+        EventType::TheftOccurred => "theft_occurred",
+        EventType::TheftFailed => "theft_failed",
+        EventType::CombatInitiated => "combat_initiated",
+        EventType::CombatResolved => "combat_resolved",
     }
 }

@@ -3,4 +3,4 @@
 /**
  * An action that an agent can submit to the World Engine.
  */
-export type ActionType = "Gather" | "Eat" | "Drink" | "Rest" | "Move" | "Build" | "Repair" | "Demolish" | "ImproveRoute" | "Communicate" | "Broadcast" | "TradeOffer" | "TradeAccept" | "TradeReject" | "FormGroup" | "Teach" | "FarmPlant" | "FarmHarvest" | "Craft" | "Mine" | "Smelt" | "Write" | "Read" | "Claim" | "Legislate" | "Enforce" | "Reproduce" | "NoAction";
+export type ActionType = "Gather" | "Eat" | "Drink" | "Rest" | "Move" | "Build" | "Repair" | "Demolish" | "ImproveRoute" | "Communicate" | "Broadcast" | "TradeOffer" | "TradeAccept" | "TradeReject" | "FormGroup" | "Teach" | "FarmPlant" | "FarmHarvest" | "Craft" | "Mine" | "Smelt" | "Write" | "Read" | "Claim" | "Legislate" | "Enforce" | "Reproduce" | "Steal" | "Attack" | "Intimidate" | "Propose" | "Vote" | "Marry" | "Divorce" | "Conspire" | "Pray" | "Freeform" | "NoAction";

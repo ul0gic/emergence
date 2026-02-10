@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use emergence_core::operator::OperatorState;
 use emergence_types::{
     Agent, AgentId, AgentState, Era, Event, Location, LocationId, Season, Weather, WorldSnapshot,
 };
@@ -94,6 +95,8 @@ pub struct AppState {
     pub tx: broadcast::Sender<TickBroadcast>,
     /// The current simulation snapshot (updated each tick).
     pub snapshot: Arc<RwLock<SimulationSnapshot>>,
+    /// Shared operator control state (present when the simulation is running).
+    pub operator_state: Option<Arc<OperatorState>>,
 }
 
 impl AppState {
@@ -103,6 +106,17 @@ impl AppState {
         Self {
             tx,
             snapshot: Arc::new(RwLock::new(SimulationSnapshot::default())),
+            operator_state: None,
+        }
+    }
+
+    /// Create a new application state with operator control state attached.
+    pub fn with_operator(operator: Arc<OperatorState>) -> Self {
+        let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        Self {
+            tx,
+            snapshot: Arc::new(RwLock::new(SimulationSnapshot::default())),
+            operator_state: Some(operator),
         }
     }
 

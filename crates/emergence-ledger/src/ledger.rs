@@ -472,7 +472,9 @@ impl Ledger {
                 | LedgerEntryType::Build
                 | LedgerEntryType::Salvage
                 | LedgerEntryType::Drop
-                | LedgerEntryType::Pickup => {}
+                | LedgerEntryType::Pickup
+                | LedgerEntryType::Theft
+                | LedgerEntryType::CombatLoot => {}
             }
         }
 

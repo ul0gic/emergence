@@ -176,6 +176,8 @@ const fn ledger_entry_type_to_db(entry_type: LedgerEntryType) -> &'static str {
         LedgerEntryType::Decay => "decay",
         LedgerEntryType::Drop => "drop",
         LedgerEntryType::Pickup => "pickup",
+        LedgerEntryType::Theft => "theft",
+        LedgerEntryType::CombatLoot => "combat_loot",
     }
 }
 

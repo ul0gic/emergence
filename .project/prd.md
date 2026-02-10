@@ -18,11 +18,15 @@ The core question: *Given resources, constraints, and freedom — what do AI age
 
 This is not a chatbot playground. This is a **digital anthropology experiment**.
 
+Each simulation run is a **bounded experiment** — a 24-hour real-time window (configurable) in which agents start from nothing and build as far as they can. When the clock runs out, the world ends and the full historical record is available for analysis and replay. Think SimCity meets Lord of the Flies meets a research lab.
+
+The simulation must be **radically open-ended.** Agents are not limited to a fixed menu of behaviors. They can propose novel actions, create social institutions, invent religions, commit crimes, form governments, wage wars, build families, lie, cheat, cooperate, and innovate — just like real civilizations. The World Engine enforces physics, not culture. Culture emerges.
+
 ---
 
 ## 2. Core Principles
 
-1. **Zero Intervention** — Once agents are seeded into the world, the operator does not interfere. The simulation runs autonomously.
+1. **Autonomous with Operator Controls** — Once agents are seeded, the simulation runs autonomously — agents make all decisions independently. The operator can control simulation parameters (speed, pause/resume, end time) and inject world events (disasters, resource changes) via the Observer dashboard, but never communicates with agents or influences individual decisions.
 2. **Full Observability** — Every action, transaction, conversation, and decision is logged as an immutable event. Operators observe via a dashboard, never through direct interaction.
 3. **Closed Economy** — All resources are finite and internally circulated. There is no "outside." Agents must work, trade, and cooperate to survive.
 4. **Emergent Behavior Only** — Agents are not scripted. They are given base knowledge, personality traits, and survival needs. Everything else — culture, commerce, governance, technology — must emerge on its own.
@@ -41,6 +45,8 @@ This is not a chatbot playground. This is a **digital anthropology experiment**.
 | **Eras** | The simulation naturally progresses through eras based on what agents have collectively discovered/built. Eras are not predetermined — they are labeled retroactively by the observation layer based on milestones. |
 | **Agent Lifespan** | Each agent has a configurable lifespan measured in world-ticks. Agents age, slow down (reduced action budget per tick), and eventually die. |
 | **Day/Night Cycle** | Agents have an energy model. They must rest. Certain services (e.g., markets) may only operate during "day" ticks. |
+| **Bounded Run** | Each simulation is a bounded experiment with a hard real-time limit (default: 24 hours). When time expires, the world ends and results are frozen for analysis. Configurable via operator controls. |
+| **Variable Speed** | Tick speed adjusts dynamically. Routine ticks (agents eating/resting) run fast with cheap/local LLM or rule-based shortcuts. Complex ticks (social interactions, discoveries, conflicts) use full LLM inference. Operator can also manually adjust speed. |
 
 ### 3.2 Geography & Infrastructure
 
@@ -114,6 +120,47 @@ Services are **API endpoints** that agents interact with programmatically. They 
 | **Stock Market / Financial Instruments** | Complex economic emergence |
 
 > **Key Design Decision:** Services in Phase 2+ should NOT be pre-built and waiting. They should either (a) emerge when agent behavior triggers their creation, or (b) be injected by the operator as a "world event" to see how agents respond.
+
+### 3.5 Two-Layer Architecture
+
+The simulation operates on two distinct layers:
+
+**Layer 1: Hard Physics (deterministic, mechanical)**
+Resources, vitals, movement, building, the ledger, inventory, structure durability. These are the non-negotiable laws of the world. You can't lie about having wood. You can't teleport. You starve if you don't eat. This layer is enforced rigidly by the World Engine.
+
+**Layer 2: Soft Culture (emergent, open-ended)**
+Everything social, political, religious, economic, and cultural is agent-driven and open-ended. Agents can create arbitrary social constructs through communication and agreement, propose novel actions beyond the base catalog, form institutions, lie, deceive, steal, conspire, cooperate, govern, worship, wage war, or make peace. The World Engine tracks and records these emergent constructs but does not prescribe them.
+
+### 3.6 Open Action System
+
+Agents are not limited to a fixed action menu. In addition to base mechanical actions (gather, build, move, trade, etc.), agents can **propose novel actions** via freeform text. The World Engine evaluates novel actions for **physical feasibility** (can this happen given the agent's location, resources, and the laws of physics?) but not moral acceptability.
+
+Examples of emergent actions the system should handle:
+
+| Novel Action | Resolution |
+|---|---|
+| Steal resources from another agent | Same location? Target has resource? Stealth vs alertness check. Transfer or fail + alert victim. |
+| Propose group votes on a leader | Group exists? Members present? Record proposal, track votes in subsequent ticks. |
+| Offer a prayer to the river | Cultural action — no mechanical effect, but observed by others. May spread or die out. |
+| Lie about food at the caves | Record truth vs stated. Track if target acts on it and discovers the deception. |
+| Demand tribute from weaker agents | Evaluate power dynamic. Target can comply, resist, or flee. |
+| Form a marriage with another agent | Both willing? Record commitment. Track fidelity, shared resources, children. |
+
+### 3.7 Social Constructs & Cultural Emergence
+
+The simulation detects and tracks emergent social patterns without prescribing them:
+
+| Domain | What Emerges | What We Track |
+|---|---|---|
+| **Religion** | Shared beliefs, rituals, evangelism, schisms | Belief clusters, adherent counts, spread rate, conflicts |
+| **Governance** | Leadership, laws, voting, authority structures | Government type, leader(s), rules, compliance rate |
+| **Family** | Partnerships, marriage, parenting, inheritance | Family trees, relationship types, child outcomes |
+| **Economy** | Currency, banking, employment, taxation | System type, wealth distribution, economic mobility |
+| **Crime & Justice** | Theft, punishment, policing, courts | Crime rate, enforcement type, recidivism |
+| **Conflict** | Wars, alliances, treaties, diplomacy | Conflict participants, casualties, resolutions |
+| **Culture** | Art, stories, traditions, language | Cultural artifacts, adoption rates, cultural identity |
+
+No social construct is pre-programmed. They arise entirely from agent reasoning and interaction.
 
 ---
 
@@ -227,6 +274,14 @@ A read-only web dashboard (served on the HOST, not inside the container) display
 - **Population Tracker** — Births, deaths, population curve, average lifespan
 - **Conflict Monitor** — Disputes, resolutions, escalations
 - **Era Tracker** — Automatic classification of current civilization stage based on discoveries
+- **Social Constructs Panel** — Emergent religions, governance structures, family systems, economic models — detected and visualized as they arise
+- **Operator Controls** — Simulation management panel (invisible to agents):
+  - Pause / Resume simulation
+  - Adjust tick speed (real-time, fast-forward, slow-motion)
+  - Set simulation end time (countdown timer)
+  - Inject world events (disasters, resource changes, technology gifts)
+  - View simulation health (LLM latency, tick duration, cost tracker)
+  - Emergency stop with state preservation
 
 ### 5.4 Alerts & Anomalies
 
@@ -390,6 +445,14 @@ These are the questions this project exists to explore:
 8. **Do different personality distributions produce different civilizations?** (All cooperative vs. mixed vs. all competitive)
 9. **Do they develop religion or mythology?** Shared beliefs about the world they inhabit?
 10. **How does their history compare to human history?** Convergent or divergent?
+11. **Do agents develop religion or mythology?** Shared beliefs, rituals, evangelism, schisms?
+12. **Do they lie?** When, to whom, about what, and how do others respond to deception?
+13. **What family structures emerge?** Monogamy, polygamy, communal child-rearing, or something novel?
+14. **Do they develop crime and policing?** Theft, fraud, self-policing, centralized law enforcement?
+15. **Do they show curiosity about "outside" the simulation?** Do they question the nature of their reality?
+16. **What economic ideology emerges?** Capitalism, socialism, novel systems? Do they transition between them?
+17. **How do they resolve conflict?** War, diplomacy, mediation, avoidance, or submission?
+18. **Does corruption emerge in governance?** Do leaders abuse power? Do agents resist?
 
 ---
 
@@ -415,6 +478,9 @@ The project is successful if:
 3. **Contained:** Zero containment breaches across all experiments
 4. **Surprising:** At least one emergent behavior occurs that the designers did not predict
 5. **Reproducible:** The same starting conditions produce meaningfully similar (but not identical) outcomes
+6. **Bounded:** A complete civilization arc (primitive → complex society) completes within a 24-hour real-time window
+7. **Culturally Rich:** Agents develop at least 3 distinct emergent social constructs (religion, governance, economic system, family structure, etc.) without being programmed to do so
+8. **Morally Complex:** Agents exhibit both prosocial (cooperation, teaching, sharing) and antisocial (theft, deception, hoarding) behavior organically
 
 ---
 

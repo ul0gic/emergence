@@ -457,3 +457,40 @@ export interface EventsResponse {
   count: number;
   events: Event[];
 }
+
+// ---------------------------------------------------------------------------
+// Operator types (for simulation management)
+// ---------------------------------------------------------------------------
+
+export type InjectedEventType =
+  | "natural_disaster"
+  | "resource_boom"
+  | "plague"
+  | "migration"
+  | "technology_gift"
+  | "resource_depletion";
+
+export interface OperatorStatus {
+  tick: number;
+  elapsed_seconds: number;
+  max_ticks: number;
+  max_real_time_seconds: number;
+  paused: boolean;
+  tick_interval_ms: number;
+  agents_alive: number;
+  agents_dead: number;
+  era: string;
+  season: string;
+  uptime_seconds: number;
+}
+
+export interface InjectEventRequest {
+  event_type: InjectedEventType;
+  target_region?: string;
+  parameters?: Record<string, unknown>;
+}
+
+export interface OperatorMutationResponse {
+  success: boolean;
+  message: string;
+}

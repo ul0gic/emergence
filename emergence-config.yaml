@@ -61,8 +61,20 @@ logging:
   event_store_batch_size: 100             # Batch size for PostgreSQL event inserts
   snapshot_interval_ticks: 100            # Full world snapshot every N ticks
 
+simulation:
+  max_ticks: 0                            # 0 = unlimited, otherwise hard stop at this tick
+  max_real_time_seconds: 86400            # 24 hours default, 0 = unlimited
+  end_condition: "time_limit"             # time_limit | extinction | era_reached | manual
+
+operator:
+  api_enabled: true
+  api_auth_token: ""                      # Bearer token for operator REST endpoints
+
 llm:
   default_backend: "openai"
   escalation_backend: "anthropic"
   max_retries: 2
   request_timeout_ms: 7000               # Must be less than agent_decision_timeout_ms
+  routine_action_bypass: true             # Skip LLM for obvious survival decisions
+  night_cycle_skip: true                  # No LLM call for sleeping/resting agents
+  cost_tracking: true                     # Track estimated LLM costs per tick

@@ -2176,8 +2176,11 @@ pub fn execute_action(
         }
         (ActionType::NoAction, ActionParameters::NoAction) => Ok(execute_no_action(agent)),
         _ => {
-            // Remaining action types (e.g. TradeAccept, TradeReject, FormGroup)
+            // Remaining action types (e.g. TradeAccept, TradeReject, FormGroup,
+            // Steal, Attack, Propose, Vote, Marry, Divorce, Conspire, Pray)
             // are handled externally by the tick cycle or are not yet wired.
+            // Freeform actions are routed through the feasibility evaluator
+            // in emergence-core before reaching execution.
             Ok(execute_no_action(agent))
         }
     }

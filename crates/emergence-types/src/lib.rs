@@ -19,7 +19,9 @@ pub mod perception;
 pub mod structs;
 
 // Re-export all public types at crate root for convenience.
-pub use actions::{ActionOutcome, ActionParameters, ActionRequest, ActionResult};
+pub use actions::{
+    ActionOutcome, ActionParameters, ActionRequest, ActionResult, ActionTarget, FreeformAction,
+};
 pub use enums::{
     ActionType, EntityType, Era, EventType, LedgerEntryType, MemoryTier, PathType, RejectionReason,
     Resource, Season, StructureCategory, StructureType, TimeOfDay, Weather,
@@ -30,15 +32,16 @@ pub use ids::{
 pub use perception::{KnownRoute, Perception, SelfState, Surroundings, VisibleAgent};
 pub use structs::{
     AccessControlList, ActionRejectedDetails, ActionSucceededDetails, Agent, AgentDiedDetails,
-    AgentState, AgentStateSnapshot, EconomyStats, EnforcementAppliedDetails, Event, Group,
-    GroupFormedDetails, InteractionCause, KnowledgeDiscoveredDetails, KnowledgeTaughtDetails,
-    LedgerEntry, Location, LocationEffects, MemoryEntry, Message, PendingTrade, Personality,
-    PopulationStats, RejectionDetails, RelationshipChangedDetails, ResourceGatheredDetails,
-    ResourceNode, Route, RouteDegradedDetails, RouteImprovedDetails, Rule, RuleCreatedDetails,
-    Structure, StructureBlueprint, StructureBuiltDetails, StructureClaimedDetails,
-    StructureDestroyedDetails, StructureProperties, StructureRepairedDetails,
-    TradeCompletedDetails, TradeFailReason, TradeFailedDetails, VisibleMessage, VisibleStructure,
-    WorldContext, WorldSnapshot, memory_types,
+    AgentState, AgentStateSnapshot, CombatInitiatedDetails, CombatIntent, CombatResolvedDetails,
+    EconomyStats, EnforcementAppliedDetails, Event, Group, GroupFormedDetails, InteractionCause,
+    KnowledgeDiscoveredDetails, KnowledgeTaughtDetails, LedgerEntry, Location, LocationEffects,
+    MemoryEntry, Message, PendingTrade, Personality, PopulationStats, RejectionDetails,
+    RelationshipChangedDetails, ResourceGatheredDetails, ResourceNode, Route, RouteDegradedDetails,
+    RouteImprovedDetails, Rule, RuleCreatedDetails, Structure, StructureBlueprint,
+    StructureBuiltDetails, StructureClaimedDetails, StructureDestroyedDetails,
+    StructureProperties, StructureRepairedDetails, TheftFailedDetails, TheftFailureReason,
+    TheftOccurredDetails, TradeCompletedDetails, TradeFailReason, TradeFailedDetails,
+    VisibleMessage, VisibleStructure, WorldContext, WorldSnapshot, memory_types,
 };
 
 #[cfg(test)]
@@ -127,12 +130,20 @@ mod tests {
         let _ = crate::structs::StructureClaimedDetails::export_all();
         let _ = crate::structs::RuleCreatedDetails::export_all();
         let _ = crate::structs::EnforcementAppliedDetails::export_all();
+        let _ = crate::structs::TheftOccurredDetails::export_all();
+        let _ = crate::structs::TheftFailureReason::export_all();
+        let _ = crate::structs::TheftFailedDetails::export_all();
+        let _ = crate::structs::CombatIntent::export_all();
+        let _ = crate::structs::CombatInitiatedDetails::export_all();
+        let _ = crate::structs::CombatResolvedDetails::export_all();
 
         // Actions
         let _ = crate::actions::ActionParameters::export_all();
         let _ = crate::actions::ActionRequest::export_all();
         let _ = crate::actions::ActionOutcome::export_all();
         let _ = crate::actions::ActionResult::export_all();
+        let _ = crate::actions::FreeformAction::export_all();
+        let _ = crate::actions::ActionTarget::export_all();
 
         // Perception
         let _ = crate::perception::Perception::export_all();

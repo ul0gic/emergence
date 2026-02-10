@@ -3,4 +3,4 @@
 /**
  * The category of a resource transfer in the central ledger.
  */
-export type LedgerEntryType = "Regeneration" | "Gather" | "Consume" | "Transfer" | "Build" | "Salvage" | "Decay" | "Drop" | "Pickup";
+export type LedgerEntryType = "Regeneration" | "Gather" | "Consume" | "Transfer" | "Build" | "Salvage" | "Decay" | "Drop" | "Pickup" | "Theft" | "CombatLoot";

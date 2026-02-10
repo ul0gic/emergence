@@ -192,6 +192,14 @@ impl SocialGraph {
             InteractionCause::Conflict => {
                 compute_conflict_delta(conflict_severity.unwrap_or(SCORE_DEFAULT))?
             }
+            InteractionCause::Theft => {
+                // Theft has a strong negative impact on relationships
+                compute_conflict_delta(conflict_severity.unwrap_or(SCORE_DEFAULT))?
+            }
+            InteractionCause::Intimidation => {
+                // Intimidation has a moderate negative impact
+                compute_conflict_delta(conflict_severity.unwrap_or(SCORE_DEFAULT))?
+            }
         };
 
         self.update_relationship(agent_id, delta, current_tick)

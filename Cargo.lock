@@ -591,6 +591,7 @@ dependencies = [
  "serde_json",
  "serde_yml",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
@@ -635,6 +636,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "emergence-core",
  "emergence-types",
  "rust_decimal",
  "serde",

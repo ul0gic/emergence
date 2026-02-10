@@ -65,7 +65,7 @@
 | minijinja | 2.x | Prompt template engine (templates loaded from files) |
 
 **Rationale:**
-- All LLM backends (DeepSeek, OpenAI, Claude, Ollama) expose OpenAI-compatible REST APIs — no Python SDK required
+- All LLM backends (OpenAI, Anthropic) expose REST APIs — no Python SDK required
 - Single `cargo build` compiles the entire simulation (engine + runner)
 - Perception and action types from `emergence-types` are compile-time checked end-to-end — no serialization bugs between runner and engine
 - One Docker image, one dependency tree, one language to maintain
@@ -74,7 +74,7 @@
 **Why not Python:**
 - The original plan was Python for its LLM SDK ecosystem. In practice, the agent runner is "receive JSON → build prompt → call HTTP endpoint → parse JSON → send JSON." Every LLM provider exposes a REST API. Python adds a second language, second build system, second dependency tree, and second Docker image for no material benefit.
 - No GPU on the target system eliminates the local model in-process argument (the one thing that truly needed Python's ML ecosystem)
-- Cheap API models (OpenAI, DeepSeek) are faster and higher quality than local models anyway
+- Cheap API models (OpenAI nano/mini tier) are faster and higher quality than local models anyway
 
 ---
 
@@ -317,9 +317,9 @@ emergence/
 | `DATABASE_URL` | PostgreSQL connection string | Yes |
 | `DRAGONFLY_URL` | Dragonfly connection string | Yes |
 | `NATS_URL` | NATS server URL | Yes |
-| `DEEPSEEK_API_KEY` | DeepSeek API key (agent decisions) | Yes (if using DeepSeek) |
-| `ANTHROPIC_API_KEY` | Claude API key (escalation decisions) | No |
-| `OLLAMA_URL` | Ollama server URL (local models) | No |
+| `LLM_DEFAULT_API_KEY` | OpenAI API key (routine agent decisions) | Yes |
+| `LLM_ESCALATION_API_KEY` | Anthropic API key (escalation decisions) | Yes |
+| `OPERATOR_API_TOKEN` | Bearer token for operator REST API | No (empty = auth disabled) |
 | `OBSERVER_PORT` | Dashboard port | No (default: 8080) |
 | `RUST_LOG` | Logging level | No (default: info) |
 
@@ -341,20 +341,41 @@ emergence/
 
 | Service | Purpose | Required |
 |---------|---------|----------|
-| DeepSeek API | Cost-efficient LLM for routine agent decisions | Yes (default backend) |
-| Claude API (Anthropic) | High-quality LLM for complex agent decisions (discoveries, conflicts) | Optional (escalation backend) |
-| Ollama (local) | Offline LLM inference, maximum cost control | Optional (fallback backend) |
+| OpenAI API | Cost-efficient LLM for routine agent decisions (nano/mini tier models) | Yes (default backend) |
+| Anthropic API | High-quality LLM for complex agent decisions (discoveries, conflicts, diplomacy) | Yes (escalation backend) |
 
 ### LLM Backend Strategy
 
-| Backend | Use Case | Cost |
-|---------|----------|------|
-| **DeepSeek** | Default — routine agent decisions (gathering, moving, resting) | Low |
-| **OpenAI (cheap models)** | Default alternative — fast, cheap, good enough for routine decisions | Low |
-| **Claude** | Escalation — discoveries, complex social interactions, governance | Medium |
-| **Ollama (local)** | Fallback — offline operation, requires GPU on target system | Free (hardware cost only) |
+The agent runner uses a two-tier LLM architecture optimized for cost and quality:
 
-All backends are called via `reqwest` HTTP client from the Rust agent runner. Swapping backends is a config change (endpoint URL + API key). Configuration allows per-experiment backend selection and automatic escalation from default to escalation backend based on situation complexity.
+| Backend | Use Case | Cost | When Used |
+|---------|----------|------|-----------|
+| **OpenAI (nano/mini)** | Default — routine agent decisions (gathering, moving, resting, basic social) | Low | Every tick for active agents with non-trivial decisions |
+| **Anthropic (Haiku)** | Escalation — discoveries, complex social interactions, governance, diplomacy, deception | Medium | Only when tick complexity scoring exceeds routine threshold |
+| **Rule engine (no LLM)** | Bypass — obvious survival actions (eat when starving, rest when exhausted, sleep at night) | Free | Routine action fast-path and night cycle skip |
+
+All backends are called via `reqwest` HTTP client from the Rust agent runner. Swapping backends is a config change (endpoint URL + API key). Configuration allows per-experiment backend selection and automatic escalation from default to escalation backend based on tick complexity scoring.
+
+### Two-Layer Architecture
+
+The simulation operates on two distinct layers:
+
+1. **Hard Physics Layer (World Engine):** Deterministic, rule-based, non-negotiable. Resource conservation, ledger balancing, action validation, environmental effects, vitals, death conditions. The engine enforces these laws absolutely — no agent or LLM call can violate them.
+
+2. **Soft Culture Layer (Emergent):** Non-deterministic, agent-driven, observed. Religion, governance, economic systems, family structures, alliances, deception, reputation. These are not programmed — they emerge from agent interactions and are detected/tracked by the social construct system.
+
+The hard layer is the physics. The soft layer is the sociology. The engine owns the first; the agents create the second.
+
+### Bounded Simulation Runs
+
+Simulations run as bounded experiments with a default 24-hour real-time limit:
+
+- **`max_real_time_seconds`** — Hard wall-clock limit (default: 86400 = 24 hours)
+- **`max_ticks`** — Hard tick count limit (default: 0 = unlimited)
+- **`end_condition`** — Termination trigger: `time_limit`, `extinction`, `era_reached`, or `manual`
+- At shutdown, the engine writes a final world snapshot, generates a summary report, and the observer switches to replay/analysis mode
+- All history is preserved in PostgreSQL for post-run analysis
+- Routine action bypass and night cycle skip allow 30,000+ ticks in a 24-hour window
 
 ---
 

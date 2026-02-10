@@ -6,6 +6,8 @@
 //!   streaming via [`tokio::sync::broadcast`]
 //! - **REST endpoints** for querying simulation state (agents, locations,
 //!   events, world snapshot)
+//! - **Operator REST endpoints** for runtime control (pause, resume,
+//!   speed, status, event injection, stop)
 //! - **Minimal HTML dashboard** (`GET /`) showing current tick, era,
 //!   season, and links to API endpoints
 //!
@@ -26,6 +28,7 @@
 
 pub mod error;
 pub mod handlers;
+pub mod operator;
 pub mod router;
 pub mod server;
 pub mod state;

@@ -36,6 +36,7 @@ use tracing::{debug, info, warn};
 
 use crate::clock::WorldClock;
 use crate::decision::DecisionSource;
+use crate::feasibility::{self, FeasibilityContext, FeasibilityResult};
 use crate::perception::{self, PerceptionContext};
 use emergence_agents::actions::conflict::{self, ClaimOutcome, ConflictStrategy, GatherClaim};
 use emergence_agents::actions::handlers::{self, ExecutionContext};
@@ -429,6 +430,8 @@ fn phase_resolution(
 
 /// Categorize validated actions into gather claims (for conflict resolution)
 /// and non-gather actions. Rejected actions are inserted directly into results.
+/// Freeform actions are routed through the feasibility evaluator first.
+#[allow(clippy::too_many_lines)]
 fn categorize_and_validate(
     state: &SimulationState,
     decisions: &BTreeMap<AgentId, ActionRequest>,
@@ -495,6 +498,67 @@ fn categorize_and_validate(
             current_tick: tick,
         };
 
+        // Freeform actions go through the feasibility evaluator instead
+        // of the standard validation pipeline.
+        if request.action_type == ActionType::Freeform {
+            if let ActionParameters::Freeform(ref freeform) = request.parameters {
+                let feasibility_ctx = build_feasibility_context(
+                    agent_id, agent_state, state,
+                );
+                let eval = feasibility::evaluate_feasibility(
+                    freeform, agent_state, &feasibility_ctx,
+                );
+                match eval {
+                    FeasibilityResult::Feasible { resolved_action, .. } => {
+                        // Replace freeform with the resolved concrete action
+                        let resolved_request = ActionRequest {
+                            agent_id: request.agent_id,
+                            tick: request.tick,
+                            action_type: resolved_action.action_type,
+                            parameters: resolved_action.parameters,
+                            submitted_at: request.submitted_at,
+                        };
+                        debug!(
+                            tick, ?agent_id,
+                            resolved = ?resolved_request.action_type,
+                            "Freeform action resolved"
+                        );
+                        non_gather_actions.push((agent_id, resolved_request));
+                    }
+                    FeasibilityResult::Infeasible { reason } => {
+                        debug!(tick, ?agent_id, %reason, "Freeform action infeasible");
+                        results.insert(
+                            agent_id,
+                            make_rejection(
+                                tick, agent_id, ActionType::Freeform,
+                                RejectionReason::Infeasible,
+                            ),
+                        );
+                    }
+                    FeasibilityResult::NeedsEvaluation { context } => {
+                        debug!(tick, ?agent_id, %context, "Freeform action needs LLM evaluation");
+                        // TODO: queue for LLM judge in future phase
+                        results.insert(
+                            agent_id,
+                            make_rejection(
+                                tick, agent_id, ActionType::Freeform,
+                                RejectionReason::NeedsEvaluation,
+                            ),
+                        );
+                    }
+                }
+            } else {
+                results.insert(
+                    agent_id,
+                    make_rejection(
+                        tick, agent_id, ActionType::Freeform,
+                        RejectionReason::InvalidAction,
+                    ),
+                );
+            }
+            continue;
+        }
+
         let validation_result = validation::validate_action(
             request.action_type,
             &request.parameters,
@@ -529,6 +593,39 @@ fn categorize_and_validate(
     CategorizedActions {
         gather_claims,
         non_gather: non_gather_actions,
+    }
+}
+
+/// Build a [`FeasibilityContext`] for evaluating a freeform action.
+fn build_feasibility_context(
+    agent_id: AgentId,
+    agent_state: &AgentState,
+    state: &SimulationState,
+) -> FeasibilityContext {
+    let location_id = agent_state.location_id;
+
+    let location_resources = state
+        .world_map
+        .get_location(location_id)
+        .map(|loc| loc.resources().clone())
+        .unwrap_or_default();
+
+    let agents_at_location: Vec<AgentId> = state
+        .world_map
+        .get_location(location_id)
+        .map(|loc| loc.occupants.iter().copied().collect())
+        .unwrap_or_default();
+
+    let structures_at_location: Vec<emergence_types::StructureId> = Vec::new();
+
+    FeasibilityContext {
+        agent_id,
+        location_id,
+        location_resources,
+        agents_at_location,
+        structures_at_location,
+        agent_groups: Vec::new(),
+        agent_knowledge: agent_state.knowledge.clone(),
     }
 }
 

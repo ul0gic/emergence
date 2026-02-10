@@ -77,6 +77,14 @@ pub struct SimulationConfig {
     /// LLM backend configuration.
     #[serde(default)]
     pub llm: LlmConfig,
+
+    /// Simulation boundary parameters.
+    #[serde(default)]
+    pub simulation: SimulationBoundsConfig,
+
+    /// Operator control configuration.
+    #[serde(default)]
+    pub operator: OperatorConfig,
 }
 
 impl SimulationConfig {
@@ -389,6 +397,59 @@ impl Default for LlmConfig {
     }
 }
 
+/// Simulation boundary configuration.
+///
+/// Controls when and how the simulation ends. A value of 0 for
+/// either `max_ticks` or `max_real_time_seconds` means unlimited.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SimulationBoundsConfig {
+    /// Maximum number of ticks before the simulation ends (0 = unlimited).
+    #[serde(default)]
+    pub max_ticks: u64,
+
+    /// Maximum wall-clock seconds before the simulation ends (0 = unlimited).
+    #[serde(default = "default_max_real_time_seconds")]
+    pub max_real_time_seconds: u64,
+
+    /// End condition type: `time_limit`, `extinction`, `era_reached`, `manual`.
+    #[serde(default = "default_end_condition")]
+    pub end_condition: String,
+}
+
+impl Default for SimulationBoundsConfig {
+    fn default() -> Self {
+        Self {
+            max_ticks: 0,
+            max_real_time_seconds: default_max_real_time_seconds(),
+            end_condition: default_end_condition(),
+        }
+    }
+}
+
+/// Operator control configuration.
+///
+/// Settings for the operator REST API that controls the simulation
+/// at runtime (pause, resume, speed, event injection, stop).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OperatorConfig {
+    /// Whether the operator API is enabled.
+    #[serde(default = "default_true")]
+    pub api_enabled: bool,
+
+    /// Bearer token for authenticating operator requests (empty = no auth).
+    #[serde(default)]
+    pub api_auth_token: String,
+}
+
+impl Default for OperatorConfig {
+    fn default() -> Self {
+        Self {
+            api_enabled: true,
+            api_auth_token: String::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Default value functions (serde default requires named functions)
 // ---------------------------------------------------------------------------
@@ -524,6 +585,14 @@ const fn default_max_retries() -> u32 {
 
 const fn default_request_timeout_ms() -> u64 {
     7000
+}
+
+const fn default_max_real_time_seconds() -> u64 {
+    86_400
+}
+
+fn default_end_condition() -> String {
+    "time_limit".to_owned()
 }
 
 const fn default_true() -> bool {

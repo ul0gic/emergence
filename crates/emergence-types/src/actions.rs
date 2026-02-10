@@ -15,6 +15,53 @@ use crate::ids::{AgentId, GroupId, LocationId, RuleId, StructureId, TradeId};
 use crate::structs::RejectionDetails;
 
 // ---------------------------------------------------------------------------
+// Freeform Action Types
+// ---------------------------------------------------------------------------
+
+/// The target entity of a freeform or targeted action.
+///
+/// Used by [`FreeformAction`] and by conflict/diplomacy action parameters
+/// to identify what the action is directed at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub enum ActionTarget {
+    /// Target is another agent.
+    Agent(AgentId),
+    /// Target is a location.
+    Location(LocationId),
+    /// Target is a structure.
+    Structure(StructureId),
+    /// Target is a resource (identified by name).
+    Resource(String),
+    /// Target is a social group.
+    Group(GroupId),
+}
+
+/// A novel action proposed by an agent beyond the base action catalog.
+///
+/// Agents submit freeform actions when they want to do something not covered
+/// by the fixed `ActionType` enum. The feasibility evaluator in
+/// `emergence-core` determines whether the action is physically possible.
+///
+/// ## Examples
+///
+/// - "I want to pray at the river" -- category "pray", target `Location`
+/// - "I want to steal berries from Alpha" -- category "steal", target `Agent`
+/// - "I want to sing a song" -- category "social", target `None`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct FreeformAction {
+    /// What the agent wants to do, in natural language.
+    pub intent: String,
+    /// The type/category of action (steal, pray, marry, attack, etc.).
+    pub action_category: String,
+    /// Target entity (agent, location, structure, or resource).
+    pub target: Option<ActionTarget>,
+    /// Additional parameters the agent specified.
+    pub parameters: BTreeMap<String, serde_json::Value>,
+}
+
+// ---------------------------------------------------------------------------
 // 7.2 ActionParameters
 // ---------------------------------------------------------------------------
 
@@ -160,6 +207,64 @@ pub enum ActionParameters {
         /// The partner agent.
         partner_agent: AgentId,
     },
+    /// Parameters for [`ActionType::Steal`].
+    Steal {
+        /// The agent to steal from.
+        target_agent: AgentId,
+        /// The resource to steal.
+        resource: Resource,
+    },
+    /// Parameters for [`ActionType::Attack`].
+    Attack {
+        /// The agent to attack.
+        target_agent: AgentId,
+    },
+    /// Parameters for [`ActionType::Intimidate`].
+    Intimidate {
+        /// The agent to intimidate.
+        target_agent: AgentId,
+    },
+    /// Parameters for [`ActionType::Propose`].
+    Propose {
+        /// The group to propose to.
+        group_id: GroupId,
+        /// Description of the proposal.
+        proposal: String,
+    },
+    /// Parameters for [`ActionType::Vote`].
+    Vote {
+        /// The group the vote is for.
+        group_id: GroupId,
+        /// Whether the agent votes in favor.
+        in_favor: bool,
+    },
+    /// Parameters for [`ActionType::Marry`].
+    Marry {
+        /// The agent to marry.
+        partner_agent: AgentId,
+    },
+    /// Parameters for [`ActionType::Divorce`].
+    Divorce {
+        /// The agent to divorce.
+        partner_agent: AgentId,
+    },
+    /// Parameters for [`ActionType::Conspire`].
+    Conspire {
+        /// The agents to conspire with.
+        co_conspirators: Vec<AgentId>,
+        /// The secret plan.
+        plan: String,
+    },
+    /// Parameters for [`ActionType::Pray`].
+    Pray {
+        /// Optional description of what the agent prays about.
+        intent: Option<String>,
+    },
+    /// Parameters for [`ActionType::Freeform`].
+    ///
+    /// Wraps a [`FreeformAction`] for novel actions proposed by agents
+    /// that do not match any fixed action type.
+    Freeform(Box<FreeformAction>),
     /// Parameters for [`ActionType::NoAction`].
     NoAction,
 }

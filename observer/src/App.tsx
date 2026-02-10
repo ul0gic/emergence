@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AgentInspector from "./components/AgentInspector.tsx";
 import DiscoveryLog from "./components/DiscoveryLog.tsx";
 import EconomyMonitor from "./components/EconomyMonitor.tsx";
+import OperatorControls from "./components/OperatorControls.tsx";
 import PopulationTracker from "./components/PopulationTracker.tsx";
 import SocialGraph from "./components/SocialGraph.tsx";
 import Timeline from "./components/Timeline.tsx";
@@ -30,7 +31,15 @@ import { cn } from "./lib/utils.ts";
 import { formatNumber, getSeasonClass } from "./utils/format.ts";
 import { MOCK_ROUTES } from "./utils/mockData.ts";
 
-type TabId = "world" | "agents" | "economy" | "social" | "timeline" | "population" | "discovery";
+type TabId =
+  | "world"
+  | "agents"
+  | "economy"
+  | "social"
+  | "timeline"
+  | "population"
+  | "discovery"
+  | "operator";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "world", label: "World Map" },
@@ -40,6 +49,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "timeline", label: "Timeline" },
   { id: "population", label: "Population" },
   { id: "discovery", label: "Discoveries" },
+  { id: "operator", label: "Operator" },
 ];
 
 function connectionStatusLabel(status: ConnectionStatus): string {
@@ -163,6 +173,7 @@ export default function App() {
         "5": "timeline",
         "6": "population",
         "7": "discovery",
+        "8": "operator",
       };
       const tab = tabKeys[e.key];
       if (tab) {
@@ -297,6 +308,9 @@ export default function App() {
             agentNames={agentNames}
             useMock={useMock}
           />
+        )}
+        {activeTab === "operator" && (
+          <OperatorControls connectionStatus={status} useMock={useMock} />
         )}
       </main>
     </div>

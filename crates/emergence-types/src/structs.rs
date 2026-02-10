@@ -904,6 +904,10 @@ pub enum InteractionCause {
     Communication,
     /// A conflict occurred between the agents.
     Conflict,
+    /// A theft was attempted or committed against the victim.
+    Theft,
+    /// An intimidation attempt occurred between agents.
+    Intimidation,
 }
 
 /// Details for a relationship change event.
@@ -1197,4 +1201,130 @@ pub struct EnforcementAppliedDetails {
     pub group_id: GroupId,
     /// A description of the consequence applied.
     pub consequence: String,
+}
+
+// ---------------------------------------------------------------------------
+// Theft Event Details (Phase 6.3.3)
+// ---------------------------------------------------------------------------
+
+/// Details for a successful theft event.
+///
+/// Emitted when an agent successfully steals resources from another agent
+/// at the same location. The stolen resources are transferred via the
+/// central ledger with entry type `Theft`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct TheftOccurredDetails {
+    /// The agent who committed the theft.
+    pub thief_id: AgentId,
+    /// The agent who was stolen from.
+    pub victim_id: AgentId,
+    /// The resource that was stolen.
+    pub resource: Resource,
+    /// The quantity stolen.
+    pub quantity_stolen: u32,
+    /// Whether the victim detected the thief.
+    pub detected: bool,
+    /// The location where the theft occurred.
+    pub location_id: LocationId,
+}
+
+/// The reason a theft attempt failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub enum TheftFailureReason {
+    /// The victim is not at the same location as the thief.
+    VictimNotPresent,
+    /// The victim does not have the targeted resource.
+    VictimHasNoResource,
+    /// The thief was caught due to victim alertness.
+    Caught,
+    /// The thief did not have sufficient stealth to attempt theft.
+    InsufficientSkill,
+}
+
+/// Details for a failed theft event.
+///
+/// Emitted when a theft attempt fails. If the victim detected the attempt,
+/// they will be notified in the next perception cycle and the relationship
+/// will be damaged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct TheftFailedDetails {
+    /// The agent who attempted the theft.
+    pub thief_id: AgentId,
+    /// The agent who was the target.
+    pub victim_id: AgentId,
+    /// The resource the thief was trying to steal.
+    pub target_resource: Resource,
+    /// Why the theft failed.
+    pub reason: TheftFailureReason,
+    /// Whether the victim detected the attempt.
+    pub detected: bool,
+    /// The location where the attempt occurred.
+    pub location_id: LocationId,
+}
+
+// ---------------------------------------------------------------------------
+// Combat Event Details (Phase 6.3.5)
+// ---------------------------------------------------------------------------
+
+/// The intent of a combat action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub enum CombatIntent {
+    /// Scare without violence -- lower energy cost, no damage.
+    Intimidate,
+    /// Direct physical assault.
+    Attack,
+}
+
+/// Details for a combat initiated event.
+///
+/// Emitted at the start of a combat encounter, before resolution.
+/// All agents at the location can observe this in their next perception.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CombatInitiatedDetails {
+    /// The agent who started the fight.
+    pub attacker_id: AgentId,
+    /// The agent being attacked.
+    pub defender_id: AgentId,
+    /// The type of combat action.
+    pub intent: CombatIntent,
+    /// The location where combat occurred.
+    pub location_id: LocationId,
+}
+
+/// Details for a combat resolved event.
+///
+/// Emitted after combat resolution with all consequences applied.
+/// Includes damage dealt, energy spent, and any loot transferred.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CombatResolvedDetails {
+    /// The agent who initiated the combat.
+    pub attacker_id: AgentId,
+    /// The defending agent.
+    pub defender_id: AgentId,
+    /// The intent of the combat action.
+    pub intent: CombatIntent,
+    /// The winner of the combat (`None` if a draw).
+    pub winner: Option<AgentId>,
+    /// Health damage dealt to the attacker.
+    pub attacker_damage: u32,
+    /// Health damage dealt to the defender.
+    pub defender_damage: u32,
+    /// Energy spent by the attacker.
+    pub attacker_energy_cost: u32,
+    /// Energy spent by the defender.
+    pub defender_energy_cost: u32,
+    /// Resources looted by the winner from the loser.
+    pub loot_transferred: BTreeMap<Resource, u32>,
+    /// Whether the attacker died as a result of combat.
+    pub attacker_died: bool,
+    /// Whether the defender died as a result of combat.
+    pub defender_died: bool,
+    /// The location where combat occurred.
+    pub location_id: LocationId,
 }

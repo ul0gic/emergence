@@ -12,7 +12,9 @@
 //! - [`validation`] -- The 7-stage validation pipeline.
 //! - [`conflict`] -- Conflict resolution for contested resources.
 
+pub mod combat;
 pub mod conflict;
 pub mod costs;
 pub mod handlers;
+pub mod theft;
 pub mod validation;
