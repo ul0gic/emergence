@@ -5,7 +5,7 @@
  * display with trend line, trade volume over time, resource totals,
  * Lorenz curve for inequality visualization, and resource flow Sankey diagram.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as d3 from "d3";
 
@@ -16,6 +16,8 @@ import type {
   TickBroadcast,
   WorldSnapshot,
 } from "../types/generated/index.ts";
+import type { ChartTooltipData } from "./ui/chart-tooltip.tsx";
+import { ChartTooltip } from "./ui/chart-tooltip.tsx";
 import { formatGini, formatNumber, formatResourceName, getResourceColor } from "../utils/format.ts";
 
 interface EconomyMonitorProps {
@@ -214,6 +216,8 @@ function LorenzCurve({
   agents: AgentListItem[];
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState<ChartTooltipData | null>(null);
 
   // Compute Lorenz curve points from per-agent wealth proxy.
   // Since AgentListItem doesn't carry inventory, we use the Gini from the
@@ -324,6 +328,33 @@ function LorenzCurve({
         .attr("stroke", "var(--color-chart-5)")
         .attr("stroke-width", 2)
         .attr("d", line);
+
+      // Interactive hover dots on Lorenz curve.
+      g.selectAll(".lorenz-dot")
+        .data(lorenzPoints.filter((_, i) => i > 0))
+        .join("circle")
+        .attr("class", "lorenz-dot")
+        .attr("cx", (d) => x(d.x))
+        .attr("cy", (d) => y(d.y))
+        .attr("r", 6)
+        .attr("fill", "transparent")
+        .attr("cursor", "crosshair")
+        .on("mouseenter", (event: MouseEvent, d) => {
+          const container = containerRef.current;
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          setTooltip({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            title: "Lorenz Curve",
+            rows: [
+              { label: "Population", value: `${(d.x * 100).toFixed(0)}%` },
+              { label: "Wealth share", value: `${(d.y * 100).toFixed(1)}%` },
+              { label: "Equality line", value: `${(d.x * 100).toFixed(0)}%` },
+            ],
+          });
+        })
+        .on("mouseleave", () => setTooltip(null));
     }
 
     // Axis labels.
@@ -363,8 +394,9 @@ function LorenzCurve({
 
   return (
     <div className="flex gap-lg items-start mb-md flex-wrap">
-      <div className="chart-container w-[260px] shrink-0">
+      <div ref={containerRef} className="chart-container w-[260px] shrink-0 relative">
         <svg ref={svgRef} className="w-full" style={{ maxHeight: "200px" }} />
+        <ChartTooltip data={tooltip} />
       </div>
       <div className="flex flex-col gap-sm min-w-[140px]">
         <div className="bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm">
@@ -390,6 +422,8 @@ function LorenzCurve({
 
 function ResourceFlowSankey({ economy }: { economy: EconomyStats }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState<ChartTooltipData | null>(null);
 
   const flowData = useMemo(() => {
     // Build flows: Source categories -> Destination (Agents vs Nodes).
@@ -444,14 +478,9 @@ function ResourceFlowSankey({ economy }: { economy: EconomyStats }) {
       return;
     }
 
-    const width = 500;
-    const height = 180;
-    const margin = { top: 10, right: 120, bottom: 10, left: 120 };
+    const width = 600;
+    const margin = { top: 10, right: 140, bottom: 10, left: 100 };
     const innerW = width - margin.left - margin.right;
-    const innerH = height - margin.top - margin.bottom;
-
-    svg.attr("viewBox", `0 0 ${width} ${height}`);
-    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
     // Collect unique sources and targets.
     const sources = [...new Set(flowData.map((f) => f.source))];
@@ -469,67 +498,82 @@ function ResourceFlowSankey({ economy }: { economy: EconomyStats }) {
     const totalFlow = d3.sum(flowData, (f) => f.value);
     if (totalFlow === 0) return;
 
-    // Y positions for source nodes.
-    const nodeHeight = 16;
-    const sourceGap = Math.max(4, (innerH - sources.length * nodeHeight) / Math.max(1, sources.length - 1));
-    const targetGap = Math.max(4, (innerH - targets.length * nodeHeight * 2) / Math.max(1, targets.length - 1));
+    // Fixed bar heights — scale to number of nodes, not viewport.
+    const nodeHeight = 20;
+    const gap = 12;
 
-    // Draw source nodes (left).
+    // Pre-compute positions so we can derive the viewBox height.
     const sourceYPositions = new Map<string, { y: number; height: number }>();
     let yCursor = 0;
     for (const src of sources) {
       const total = sourceTotals.get(src) ?? 0;
-      const barH = Math.max(nodeHeight, (total / totalFlow) * innerH * 0.8);
+      const barH = Math.max(nodeHeight, Math.round((total / totalFlow) * sources.length * nodeHeight * 2));
       sourceYPositions.set(src, { y: yCursor, height: barH });
+      yCursor += barH + gap;
+    }
+    const sourceExtent = yCursor - gap;
+
+    const targetYPositions = new Map<string, { y: number; height: number }>();
+    yCursor = 0;
+    for (const tgt of targets) {
+      const total = targetTotals.get(tgt) ?? 0;
+      const barH = Math.max(nodeHeight, Math.round((total / totalFlow) * targets.length * nodeHeight * 2));
+      targetYPositions.set(tgt, { y: yCursor, height: barH });
+      yCursor += barH + gap;
+    }
+    const targetExtent = yCursor - gap;
+
+    const innerH = Math.max(sourceExtent, targetExtent);
+    const height = innerH + margin.top + margin.bottom;
+
+    svg.attr("viewBox", `0 0 ${width} ${height}`);
+    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Draw source nodes (left).
+    for (const src of sources) {
+      const pos = sourceYPositions.get(src)!;
 
       g.append("rect")
         .attr("x", 0)
-        .attr("y", yCursor)
+        .attr("y", pos.y)
         .attr("width", 12)
-        .attr("height", barH)
+        .attr("height", pos.height)
         .attr("fill", "var(--color-chart-2)")
         .attr("rx", 2);
 
       g.append("text")
         .attr("x", -6)
-        .attr("y", yCursor + barH / 2)
+        .attr("y", pos.y + pos.height / 2)
         .attr("text-anchor", "end")
         .attr("dominant-baseline", "central")
         .attr("fill", "var(--color-text-secondary)")
         .attr("font-size", "9px")
         .attr("font-family", "var(--font-mono)")
         .text(src);
-
-      yCursor += barH + sourceGap;
     }
 
     // Draw target nodes (right).
-    const targetYPositions = new Map<string, { y: number; height: number }>();
-    yCursor = 0;
     for (const tgt of targets) {
+      const pos = targetYPositions.get(tgt)!;
       const total = targetTotals.get(tgt) ?? 0;
-      const barH = Math.max(nodeHeight * 2, (total / totalFlow) * innerH * 0.8);
-      targetYPositions.set(tgt, { y: yCursor, height: barH });
 
       g.append("rect")
         .attr("x", innerW - 12)
-        .attr("y", yCursor)
+        .attr("y", pos.y)
         .attr("width", 12)
-        .attr("height", barH)
+        .attr("height", pos.height)
         .attr("fill", tgt === "Agent Inventories" ? "var(--color-chart-1)" : "var(--color-chart-3)")
         .attr("rx", 2);
 
       g.append("text")
         .attr("x", innerW + 6)
-        .attr("y", yCursor + barH / 2)
+        .attr("y", pos.y + pos.height / 2)
         .attr("text-anchor", "start")
         .attr("dominant-baseline", "central")
         .attr("fill", "var(--color-text-secondary)")
         .attr("font-size", "9px")
         .attr("font-family", "var(--font-mono)")
         .text(`${tgt} (${formatNumber(total)})`);
-
-      yCursor += barH + targetGap;
     }
 
     // Draw flows (curved links).
@@ -578,13 +622,41 @@ function ResourceFlowSankey({ economy }: { economy: EconomyStats }) {
         .attr("opacity", 0.15)
         .attr("stroke", flow.color)
         .attr("stroke-width", 0.5)
-        .attr("stroke-opacity", 0.3);
+        .attr("stroke-opacity", 0.3)
+        .attr("cursor", "pointer")
+        .on("mouseenter", (event: MouseEvent) => {
+          const container = containerRef.current;
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          setTooltip({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            title: "Resource Flow",
+            rows: [
+              { label: "From", value: flow.source },
+              { label: "To", value: flow.target },
+              { label: "Amount", value: formatNumber(flow.value) },
+            ],
+          });
+        })
+        .on("mousemove", (event: MouseEvent) => {
+          const container = containerRef.current;
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          setTooltip((prev) =>
+            prev
+              ? { ...prev, x: event.clientX - rect.left, y: event.clientY - rect.top }
+              : null,
+          );
+        })
+        .on("mouseleave", () => setTooltip(null));
     }
   }, [flowData]);
 
   return (
-    <div className="chart-container mb-md" style={{ maxWidth: "100%" }}>
-      <svg ref={svgRef} style={{ maxHeight: "200px" }} />
+    <div ref={containerRef} className="chart-container mb-md relative">
+      <svg ref={svgRef} className="w-full" />
+      <ChartTooltip data={tooltip} />
     </div>
   );
 }
@@ -601,14 +673,35 @@ function ResourceDistributionChart({
   resources: Resource[];
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState<ChartTooltipData | null>(null);
+
+  const handleBarHover = useCallback(
+    (event: MouseEvent, resource: Resource, agents: number, nodes: number) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      setTooltip({
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+        title: formatResourceName(resource),
+        rows: [
+          { label: "Agents", value: formatNumber(agents), color: getResourceColor(resource) },
+          { label: "Nodes", value: formatNumber(nodes) },
+          { label: "Total", value: formatNumber(agents + nodes) },
+        ],
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    const width = 500;
-    const height = 200;
-    const margin = { top: 8, right: 10, bottom: 60, left: 40 };
+    const width = 600;
+    const height = 260;
+    const margin = { top: 8, right: 10, bottom: 70, left: 45 };
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 
@@ -670,12 +763,34 @@ function ResourceDistributionChart({
         .attr("height", y(d.nodes) - y(d.nodes + d.agents))
         .attr("fill", getResourceColor(d.resource))
         .attr("opacity", 0.8);
+
+      // Invisible hover target for the full bar.
+      g.append("rect")
+        .attr("x", xPos)
+        .attr("y", y(d.nodes + d.agents))
+        .attr("width", barWidth)
+        .attr("height", innerH - y(d.nodes + d.agents))
+        .attr("fill", "transparent")
+        .attr("cursor", "crosshair")
+        .on("mouseenter", (event: MouseEvent) => handleBarHover(event, d.resource, d.agents, d.nodes))
+        .on("mousemove", (event: MouseEvent) => {
+          const container = containerRef.current;
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          setTooltip((prev) =>
+            prev
+              ? { ...prev, x: event.clientX - rect.left, y: event.clientY - rect.top }
+              : null,
+          );
+        })
+        .on("mouseleave", () => setTooltip(null));
     });
-  }, [economy, resources]);
+  }, [economy, resources, handleBarHover]);
 
   return (
-    <div className="chart-container mb-sm">
-      <svg ref={svgRef} />
+    <div ref={containerRef} className="chart-container mb-sm relative">
+      <svg ref={svgRef} className="w-full" style={{ minHeight: "240px" }} />
+      <ChartTooltip data={tooltip} />
       <div className="flex justify-center gap-lg text-xs font-mono text-text-secondary">
         <span className="flex items-center gap-1">
           <span className="inline-block w-2.5 h-2.5 bg-chart-1 opacity-80 rounded-sm" />
@@ -696,6 +811,8 @@ function ResourceDistributionChart({
 
 function ActivityChart({ tickHistory }: { tickHistory: TickBroadcast[] }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState<ChartTooltipData | null>(null);
 
   const sortedHistory = useMemo(
     () => [...tickHistory].sort((a, b) => a.tick - b.tick),
@@ -780,11 +897,42 @@ function ActivityChart({ tickHistory }: { tickHistory: TickBroadcast[] }) {
       .attr("fill", "var(--color-chart-1)")
       .attr("opacity", 0.1)
       .attr("d", area);
+
+    // Interactive overlay for hover tracking.
+    const bisect = d3.bisector<TickBroadcast, number>((d) => d.tick).left;
+    g.append("rect")
+      .attr("width", innerW)
+      .attr("height", innerH)
+      .attr("fill", "transparent")
+      .attr("cursor", "crosshair")
+      .on("mousemove", (event: MouseEvent) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const containerRect = container.getBoundingClientRect();
+        const [mx] = d3.pointer(event);
+        const tickVal = x.invert(mx);
+        const idx = bisect(sortedHistory, tickVal, 1);
+        const d0 = sortedHistory[idx - 1];
+        const d1 = sortedHistory[idx];
+        const d = d0 && d1 ? (tickVal - d0.tick > d1.tick - tickVal ? d1 : d0) : d0 ?? d1;
+        if (!d) return;
+        setTooltip({
+          x: event.clientX - containerRect.left,
+          y: event.clientY - containerRect.top,
+          title: `Tick ${d.tick}`,
+          rows: [
+            { label: "Actions", value: formatNumber(d.actions_resolved) },
+            { label: "Agents", value: formatNumber(d.agents_alive) },
+          ],
+        });
+      })
+      .on("mouseleave", () => setTooltip(null));
   }, [sortedHistory]);
 
   return (
-    <div className="chart-container mb-sm">
+    <div ref={containerRef} className="chart-container mb-sm relative">
       <svg ref={svgRef} />
+      <ChartTooltip data={tooltip} />
     </div>
   );
 }

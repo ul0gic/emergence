@@ -157,6 +157,7 @@ fn build_surroundings(agent_id: AgentId, ctx: &PerceptionContext) -> Surrounding
         .iter()
         .filter(|&(&id, _)| id != agent_id)
         .map(|(&id, name)| VisibleAgent {
+            id,
             name: name.clone(),
             sex: ctx.agent_sexes.get(&id).copied().unwrap_or(Sex::Female),
             relationship: String::from("unknown"),
@@ -304,6 +305,22 @@ fn build_notifications(agent: &AgentState, ctx: &PerceptionContext) -> Vec<Strin
         notes.push(String::from(
             "STORM: Travel is blocked. Seek shelter.",
         ));
+    }
+
+    // Inventory full warning
+    let current_load = emergence_agents::inventory::total_weight(&agent.inventory).unwrap_or(0);
+    if agent.carry_capacity > 0 && current_load >= agent.carry_capacity {
+        notes.push(String::from(
+            "WARNING: Inventory full. Gathering will fail. Eat food, trade, or drop items to make room.",
+        ));
+    } else if agent.carry_capacity > 0 {
+        let pct = (u64::from(current_load) * 100) / u64::from(agent.carry_capacity);
+        if pct >= 90 {
+            notes.push(format!(
+                "Inventory nearly full ({current_load}/{}). Consider eating or dropping items.",
+                agent.carry_capacity
+            ));
+        }
     }
 
     notes

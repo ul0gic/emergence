@@ -116,6 +116,8 @@ pub struct Surroundings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct VisibleAgent {
+    /// The other agent's unique identifier (use this in targeted actions).
+    pub id: AgentId,
     /// The other agent's name.
     pub name: String,
     /// The other agent's biological sex.

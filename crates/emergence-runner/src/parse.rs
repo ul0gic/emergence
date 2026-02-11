@@ -4,7 +4,9 @@
 //! validates the response into an [`ActionParameters`] from `emergence-types`.
 //! Malformed responses are handled gracefully by returning `NoAction`.
 
-use emergence_types::{ActionParameters, ActionType, KnownRoute};
+use std::collections::BTreeMap;
+
+use emergence_types::{ActionParameters, ActionType, AgentId, KnownRoute};
 use tracing::warn;
 
 use crate::error::RunnerError;
@@ -53,8 +55,16 @@ struct RawLlmResponse {
 ///
 /// When `known_routes` is provided, Move actions can resolve location names
 /// to UUIDs (fallback for LLMs that send names instead of IDs).
-pub fn parse_llm_response(raw: &str, known_routes: &[KnownRoute]) -> ParsedDecision {
-    match try_parse(raw, known_routes) {
+///
+/// When `agent_name_map` is provided, actions with `target_agent` fields
+/// can resolve agent names to UUIDs (fallback for LLMs that send names
+/// like "Iris" instead of agent UUIDs).
+pub fn parse_llm_response(
+    raw: &str,
+    known_routes: &[KnownRoute],
+    agent_name_map: &BTreeMap<String, AgentId>,
+) -> ParsedDecision {
+    match try_parse(raw, known_routes, agent_name_map) {
         Ok(decision) => decision,
         Err(e) => {
             warn!(
@@ -68,32 +78,36 @@ pub fn parse_llm_response(raw: &str, known_routes: &[KnownRoute]) -> ParsedDecis
 }
 
 /// Attempt to parse the response through multiple recovery strategies.
-fn try_parse(raw: &str, known_routes: &[KnownRoute]) -> Result<ParsedDecision, RunnerError> {
+fn try_parse(
+    raw: &str,
+    known_routes: &[KnownRoute],
+    agent_name_map: &BTreeMap<String, AgentId>,
+) -> Result<ParsedDecision, RunnerError> {
     let trimmed = raw.trim();
 
     // Strategy 1: direct parse
     if let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(trimmed) {
-        return convert_raw_response(parsed, known_routes);
+        return convert_raw_response(parsed, known_routes, agent_name_map);
     }
 
     // Strategy 2: extract from markdown code block
     if let Some(json_str) = extract_json_from_codeblock(trimmed)
         && let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(json_str)
     {
-        return convert_raw_response(parsed, known_routes);
+        return convert_raw_response(parsed, known_routes, agent_name_map);
     }
 
     // Strategy 3: strip trailing commas and retry
     let cleaned = strip_trailing_commas(trimmed);
     if let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(&cleaned) {
-        return convert_raw_response(parsed, known_routes);
+        return convert_raw_response(parsed, known_routes, agent_name_map);
     }
 
     // Strategy 4: extract from code block then strip commas
     if let Some(json_str) = extract_json_from_codeblock(trimmed) {
         let cleaned_inner = strip_trailing_commas(json_str);
         if let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(&cleaned_inner) {
-            return convert_raw_response(parsed, known_routes);
+            return convert_raw_response(parsed, known_routes, agent_name_map);
         }
     }
 
@@ -103,9 +117,13 @@ fn try_parse(raw: &str, known_routes: &[KnownRoute]) -> Result<ParsedDecision, R
 }
 
 /// Convert a deserialized raw response into a typed decision.
-fn convert_raw_response(raw: RawLlmResponse, known_routes: &[KnownRoute]) -> Result<ParsedDecision, RunnerError> {
+fn convert_raw_response(
+    raw: RawLlmResponse,
+    known_routes: &[KnownRoute],
+    agent_name_map: &BTreeMap<String, AgentId>,
+) -> Result<ParsedDecision, RunnerError> {
     let action_type = parse_action_type(&raw.action_type)?;
-    let parameters = build_parameters(action_type, &raw.parameters, known_routes)?;
+    let parameters = build_parameters(action_type, &raw.parameters, known_routes, agent_name_map)?;
 
     Ok(ParsedDecision {
         action_type,
@@ -162,6 +180,7 @@ fn build_parameters(
     action_type: ActionType,
     params: &serde_json::Value,
     known_routes: &[KnownRoute],
+    agent_name_map: &BTreeMap<String, AgentId>,
 ) -> Result<ActionParameters, RunnerError> {
     match action_type {
         ActionType::Gather => {
@@ -200,17 +219,17 @@ fn build_parameters(
             // Fallback: resolve location name to UUID via known routes
             let name_lower = dest_str.to_lowercase();
             for route in known_routes {
-                if route.destination.to_lowercase() == name_lower {
-                    if let Ok(uuid) = uuid::Uuid::parse_str(&route.destination_id) {
-                        warn!(
-                            name = dest_str,
-                            resolved_id = %route.destination_id,
-                            "Move destination resolved from name to UUID"
-                        );
-                        return Ok(ActionParameters::Move {
-                            destination: emergence_types::LocationId::from(uuid),
-                        });
-                    }
+                if route.destination.to_lowercase() == name_lower
+                    && let Ok(uuid) = uuid::Uuid::parse_str(&route.destination_id)
+                {
+                    warn!(
+                        name = dest_str,
+                        resolved_id = %route.destination_id,
+                        "Move destination resolved from name to UUID"
+                    );
+                    return Ok(ActionParameters::Move {
+                        destination: emergence_types::LocationId::from(uuid),
+                    });
                 }
             }
 
@@ -232,15 +251,14 @@ fn build_parameters(
                 .get("target_agent")
                 .ok_or_else(|| RunnerError::Parse("Communicate requires 'target_agent'".to_owned()))?;
             let target_str = target.as_str().unwrap_or("");
-            let uuid = uuid::Uuid::parse_str(target_str)
-                .map_err(|e| RunnerError::Parse(format!("invalid target_agent UUID: {e}")))?;
+            let target_agent = resolve_target_agent(target_str, agent_name_map)?;
             let message = params
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("")
                 .to_owned();
             Ok(ActionParameters::Communicate {
-                target_agent: emergence_types::AgentId::from(uuid),
+                target_agent,
                 message,
             })
         }
@@ -255,9 +273,11 @@ fn build_parameters(
         ActionType::NoAction => Ok(ActionParameters::NoAction),
         // For all other action types, attempt a direct serde deserialize
         // of the parameters into the matching ActionParameters variant.
+        // If the params contain a `target_agent` that is a name rather
+        // than a UUID, resolve it first so serde deserialization succeeds.
         _ => {
-            // Try constructing the variant name from the action type
-            let variant_json = serde_json::json!({ format!("{action_type:?}"): params });
+            let resolved_params = resolve_target_agent_in_params(params, agent_name_map);
+            let variant_json = serde_json::json!({ format!("{action_type:?}"): resolved_params });
             serde_json::from_value::<ActionParameters>(variant_json).map_err(|e| {
                 RunnerError::Parse(format!(
                     "failed to parse parameters for {action_type:?}: {e}"
@@ -265,6 +285,78 @@ fn build_parameters(
             })
         }
     }
+}
+
+/// Resolve a `target_agent` string to an [`AgentId`].
+///
+/// Tries parsing as a UUID first. If that fails, performs a case-insensitive
+/// lookup in the provided `agent_name_map` (built from the perception's
+/// `agents_here` list). This handles the common case where the LLM sends
+/// an agent name like "Iris" instead of the UUID.
+fn resolve_target_agent(
+    target_str: &str,
+    agent_name_map: &BTreeMap<String, AgentId>,
+) -> Result<AgentId, RunnerError> {
+    // Try parsing as UUID first (the expected/fast path)
+    if let Ok(uuid) = uuid::Uuid::parse_str(target_str) {
+        return Ok(AgentId::from(uuid));
+    }
+
+    // Fallback: case-insensitive name lookup
+    let name_lower = target_str.to_lowercase();
+    for (name, &agent_id) in agent_name_map {
+        if name.to_lowercase() == name_lower {
+            warn!(
+                name = target_str,
+                resolved_id = %agent_id,
+                "target_agent resolved from name to UUID"
+            );
+            return Ok(agent_id);
+        }
+    }
+
+    Err(RunnerError::Parse(format!(
+        "target_agent '{target_str}' is not a valid UUID and does not match any nearby agent"
+    )))
+}
+
+/// If the params JSON object contains a `target_agent` field that is not a
+/// valid UUID, attempt to resolve it via the agent name map and return
+/// a new params object with the UUID substituted. If the field is already
+/// a UUID or absent, returns the params unchanged.
+fn resolve_target_agent_in_params(
+    params: &serde_json::Value,
+    agent_name_map: &BTreeMap<String, AgentId>,
+) -> serde_json::Value {
+    let Some(obj) = params.as_object() else {
+        return params.clone();
+    };
+
+    let Some(target_val) = obj.get("target_agent") else {
+        return params.clone();
+    };
+
+    let Some(target_str) = target_val.as_str() else {
+        return params.clone();
+    };
+
+    // If it already parses as UUID, no rewriting needed
+    if uuid::Uuid::parse_str(target_str).is_ok() {
+        return params.clone();
+    }
+
+    // Try name resolution
+    if let Ok(agent_id) = resolve_target_agent(target_str, agent_name_map) {
+        let mut new_obj = obj.clone();
+        new_obj.insert(
+            "target_agent".to_owned(),
+            serde_json::Value::String(agent_id.to_string()),
+        );
+        return serde_json::Value::Object(new_obj);
+    }
+
+    // Could not resolve; return original and let serde fail with a clear error
+    params.clone()
 }
 
 /// Extract JSON from a markdown code block.
@@ -338,10 +430,15 @@ fn no_action_decision() -> ParsedDecision {
 mod tests {
     use super::*;
 
+    /// Shorthand for an empty name map (most tests don't need agent name resolution).
+    fn no_names() -> BTreeMap<String, AgentId> {
+        BTreeMap::new()
+    }
+
     #[test]
     fn parse_valid_gather() {
         let raw = r#"{"action_type": "Gather", "parameters": {"resource": "Wood"}, "reasoning": "I need wood"}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::Gather);
         assert!(matches!(
             decision.parameters,
@@ -353,7 +450,7 @@ mod tests {
     #[test]
     fn parse_valid_rest() {
         let raw = r#"{"action_type": "Rest", "parameters": {}, "reasoning": "I am tired"}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::Rest);
         assert!(matches!(decision.parameters, ActionParameters::Rest));
     }
@@ -361,14 +458,14 @@ mod tests {
     #[test]
     fn parse_noaction() {
         let raw = r#"{"action_type": "NoAction", "parameters": {}}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::NoAction);
     }
 
     #[test]
     fn parse_case_insensitive() {
         let raw = r#"{"action_type": "gather", "parameters": {"resource": "Stone"}}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::Gather);
     }
 
@@ -381,34 +478,34 @@ mod tests {
 ```
 
 I chose to drink because I am thirsty."#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::Drink);
     }
 
     #[test]
     fn parse_trailing_comma() {
         let raw = r#"{"action_type": "Rest", "parameters": {}, "reasoning": "tired",}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::Rest);
     }
 
     #[test]
     fn parse_garbage_returns_noaction() {
         let raw = "I think I should gather some wood. Let me do that.";
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::NoAction);
     }
 
     #[test]
     fn parse_empty_returns_noaction() {
-        let decision = parse_llm_response("", &[]);
+        let decision = parse_llm_response("", &[], &no_names());
         assert_eq!(decision.action_type, ActionType::NoAction);
     }
 
     #[test]
     fn parse_with_goal_updates() {
         let raw = r#"{"action_type": "Gather", "parameters": {"resource": "Wood"}, "goal_update": ["build shelter", "explore north"]}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::Gather);
         assert_eq!(decision.goal_updates.len(), 2);
     }
@@ -444,22 +541,105 @@ I chose to drink because I am thirsty."#;
     #[test]
     fn parse_snake_case_action_types() {
         let raw = r#"{"action_type": "no_action", "parameters": {}}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::NoAction);
 
         let raw2 = r#"{"action_type": "trade_offer", "parameters": {"target_agent": "01945c2a-3b4f-7def-8a12-bc34567890ab", "offer": {"Wood": 5}, "request": {"Stone": 3}}}"#;
-        let decision2 = parse_llm_response(raw2, &[]);
+        let decision2 = parse_llm_response(raw2, &[], &no_names());
         assert_eq!(decision2.action_type, ActionType::TradeOffer);
     }
 
     #[test]
     fn parse_broadcast() {
         let raw = r#"{"action_type": "Broadcast", "parameters": {"message": "Hello everyone!"}}"#;
-        let decision = parse_llm_response(raw, &[]);
+        let decision = parse_llm_response(raw, &[], &no_names());
         assert_eq!(decision.action_type, ActionType::Broadcast);
         assert!(matches!(
             decision.parameters,
             ActionParameters::Broadcast { ref message } if message == "Hello everyone!"
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Agent name -> UUID resolution tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn communicate_with_uuid_still_works() {
+        let target_id = AgentId::new();
+        let raw = format!(
+            r#"{{"action_type": "Communicate", "parameters": {{"target_agent": "{target_id}", "message": "Hello"}}}}"#
+        );
+        let decision = parse_llm_response(&raw, &[], &no_names());
+        assert_eq!(decision.action_type, ActionType::Communicate);
+        assert!(matches!(
+            decision.parameters,
+            ActionParameters::Communicate { target_agent, ref message }
+            if target_agent == target_id && message == "Hello"
+        ));
+    }
+
+    #[test]
+    fn communicate_with_name_resolves_to_uuid() {
+        let iris_id = AgentId::new();
+        let mut names = BTreeMap::new();
+        names.insert("Iris".to_owned(), iris_id);
+
+        let raw = r#"{"action_type": "Communicate", "parameters": {"target_agent": "Iris", "message": "Hello, would you like to gather together?"}}"#;
+        let decision = parse_llm_response(raw, &[], &names);
+        assert_eq!(decision.action_type, ActionType::Communicate);
+        assert!(matches!(
+            decision.parameters,
+            ActionParameters::Communicate { target_agent, ref message }
+            if target_agent == iris_id && message == "Hello, would you like to gather together?"
+        ));
+    }
+
+    #[test]
+    fn communicate_with_name_case_insensitive() {
+        let clay_id = AgentId::new();
+        let mut names = BTreeMap::new();
+        names.insert("Clay".to_owned(), clay_id);
+
+        let raw = r#"{"action_type": "Communicate", "parameters": {"target_agent": "clay", "message": "Hi"}}"#;
+        let decision = parse_llm_response(raw, &[], &names);
+        assert_eq!(decision.action_type, ActionType::Communicate);
+        assert!(matches!(
+            decision.parameters,
+            ActionParameters::Communicate { target_agent, .. }
+            if target_agent == clay_id
+        ));
+    }
+
+    #[test]
+    fn communicate_with_unknown_name_returns_noaction() {
+        let raw = r#"{"action_type": "Communicate", "parameters": {"target_agent": "Nobody", "message": "Hi"}}"#;
+        let decision = parse_llm_response(raw, &[], &no_names());
+        assert_eq!(decision.action_type, ActionType::NoAction);
+    }
+
+    #[test]
+    fn resolve_target_agent_uuid_path() {
+        let id = AgentId::new();
+        let result = resolve_target_agent(&id.to_string(), &no_names());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap_or(AgentId::new()), id);
+    }
+
+    #[test]
+    fn resolve_target_agent_name_path() {
+        let juniper_id = AgentId::new();
+        let mut names = BTreeMap::new();
+        names.insert("Juniper".to_owned(), juniper_id);
+
+        let result = resolve_target_agent("Juniper", &names);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap_or(AgentId::new()), juniper_id);
+    }
+
+    #[test]
+    fn resolve_target_agent_unknown_name_fails() {
+        let result = resolve_target_agent("Ghost", &no_names());
+        assert!(result.is_err());
     }
 }

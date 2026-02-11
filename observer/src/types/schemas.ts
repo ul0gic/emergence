@@ -372,7 +372,7 @@ export const OperatorStatusSchema = z.object({
   max_real_time_seconds: z.number(),
   agents_alive: z.number(),
   agents_total: z.number(),
-  end_reason: z.string().nullable().optional(),
+  end_reason: z.string().nullable().default(null),
   started_at: z.string(),
 });
 

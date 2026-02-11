@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
-use emergence_types::{Agent, AgentId, AgentState, LocationId, MemoryEntry, Personality, Sex};
+use emergence_types::{Agent, AgentId, AgentState, LocationId, MemoryEntry, Personality, Resource, Sex};
 use emergence_world::WorldMap;
 use rand::Rng;
 use rust_decimal::Decimal;
@@ -192,7 +192,12 @@ pub fn spawn_single_agent(
         location_id,
         destination_id: None,
         travel_progress: 0,
-        inventory: BTreeMap::new(),
+        inventory: {
+            let mut inv = BTreeMap::new();
+            inv.insert(Resource::FoodBerry, 5);
+            inv.insert(Resource::Water, 5);
+            inv
+        },
         carry_capacity: 50,
         knowledge,
         skills: BTreeMap::new(),
@@ -353,7 +358,12 @@ pub fn spawn_seed_agents(
             location_id,
             destination_id: None,
             travel_progress: 0,
-            inventory: BTreeMap::new(),
+            inventory: {
+                let mut inv = BTreeMap::new();
+                inv.insert(Resource::FoodBerry, 5);
+                inv.insert(Resource::Water, 5);
+                inv
+            },
             carry_capacity: 50,
             knowledge: knowledge.clone(),
             skills: BTreeMap::new(),

@@ -11,6 +11,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 import type { AgentListItem, PopulationStats, TickBroadcast } from "../types/generated/index.ts";
+import type { ChartTooltipData } from "./ui/chart-tooltip.tsx";
+import { ChartTooltip } from "./ui/chart-tooltip.tsx";
 import { formatDecimal, formatNumber, formatTick } from "../utils/format.ts";
 
 interface PopulationTrackerProps {
@@ -369,6 +371,8 @@ export default function PopulationTracker({
 
 function PopulationChart({ tickHistory }: { tickHistory: TickBroadcast[] }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState<ChartTooltipData | null>(null);
 
   const sortedHistory = useMemo(
     () => [...tickHistory].sort((a, b) => a.tick - b.tick),
@@ -464,12 +468,59 @@ function PopulationChart({ tickHistory }: { tickHistory: TickBroadcast[] }) {
       .attr("r", 4)
       .attr("fill", "var(--color-danger)")
       .attr("stroke", "var(--color-bg-primary)")
-      .attr("stroke-width", 1.5);
+      .attr("stroke-width", 1.5)
+      .attr("cursor", "pointer")
+      .on("mouseenter", (event: MouseEvent, d) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        setTooltip({
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+          title: `Tick ${d.tick}`,
+          rows: [
+            { label: "Deaths", value: formatNumber(d.deaths_this_tick), color: "var(--color-danger)" },
+            { label: "Alive", value: formatNumber(d.agents_alive) },
+          ],
+        });
+      })
+      .on("mouseleave", () => setTooltip(null));
+
+    // Interactive overlay for hover tracking on the line.
+    const bisect = d3.bisector<TickBroadcast, number>((d) => d.tick).left;
+    g.append("rect")
+      .attr("width", innerW)
+      .attr("height", innerH)
+      .attr("fill", "transparent")
+      .attr("cursor", "crosshair")
+      .on("mousemove", (event: MouseEvent) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const containerRect = container.getBoundingClientRect();
+        const [mx] = d3.pointer(event);
+        const tickVal = x.invert(mx);
+        const idx = bisect(sortedHistory, tickVal, 1);
+        const d0 = sortedHistory[idx - 1];
+        const d1 = sortedHistory[idx];
+        const d = d0 && d1 ? (tickVal - d0.tick > d1.tick - tickVal ? d1 : d0) : d0 ?? d1;
+        if (!d) return;
+        setTooltip({
+          x: event.clientX - containerRect.left,
+          y: event.clientY - containerRect.top,
+          title: `Tick ${d.tick}`,
+          rows: [
+            { label: "Population", value: formatNumber(d.agents_alive), color: "var(--color-chart-2)" },
+            ...(d.deaths_this_tick > 0 ? [{ label: "Deaths", value: formatNumber(d.deaths_this_tick), color: "var(--color-danger)" }] : []),
+          ],
+        });
+      })
+      .on("mouseleave", () => setTooltip(null));
   }, [sortedHistory]);
 
   return (
-    <div className="chart-container mb-md">
+    <div ref={containerRef} className="chart-container mb-md relative">
       <svg ref={svgRef} />
+      <ChartTooltip data={tooltip} />
     </div>
   );
 }
@@ -552,6 +603,8 @@ function AgeHistogram({ data }: { data: { range: string; count: number }[] }) {
 
 function DeathPieChart({ data }: { data: { cause: string; count: number }[] }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState<ChartTooltipData | null>(null);
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
@@ -582,7 +635,32 @@ function DeathPieChart({ data }: { data: { cause: string; count: number }[] }) {
       .attr("d", arc)
       .attr("fill", (d) => getDeathCauseColor(d.data.cause))
       .attr("stroke", "var(--color-bg-secondary)")
-      .attr("stroke-width", 2);
+      .attr("stroke-width", 2)
+      .attr("cursor", "pointer")
+      .on("mouseenter", (event: MouseEvent, d) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const pct = total > 0 ? ((d.data.count / total) * 100).toFixed(1) : "0";
+        setTooltip({
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+          rows: [
+            { label: formatCauseName(d.data.cause), value: `${d.data.count} (${pct}%)`, color: getDeathCauseColor(d.data.cause) },
+          ],
+        });
+      })
+      .on("mousemove", (event: MouseEvent) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        setTooltip((prev) =>
+          prev
+            ? { ...prev, x: event.clientX - rect.left, y: event.clientY - rect.top }
+            : null,
+        );
+      })
+      .on("mouseleave", () => setTooltip(null));
 
     // Center label: total deaths.
     g.append("text")
@@ -597,8 +675,9 @@ function DeathPieChart({ data }: { data: { cause: string; count: number }[] }) {
   }, [data]);
 
   return (
-    <div className="w-[160px] h-[160px] shrink-0">
+    <div ref={containerRef} className="w-[160px] h-[160px] shrink-0 relative">
       <svg ref={svgRef} className="w-full h-full" />
+      <ChartTooltip data={tooltip} />
     </div>
   );
 }

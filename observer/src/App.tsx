@@ -20,6 +20,13 @@ import PopulationTracker from "./components/PopulationTracker.tsx";
 import SocialConstructs from "./components/SocialConstructs.tsx";
 import SocialGraph from "./components/SocialGraph.tsx";
 import Timeline from "./components/Timeline.tsx";
+import { Badge } from "./components/ui/badge.tsx";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./components/ui/tooltip.tsx";
 import WorldMap from "./components/WorldMap.tsx";
 import {
   useAgentDetail,
@@ -531,33 +538,33 @@ export default function App() {
   }, [status, reconnect, handleExport]);
 
   return (
+    <TooltipProvider>
     <div className="flex flex-col h-screen overflow-hidden">
       {/* Header */}
       <header className="flex items-center justify-between px-lg py-sm bg-bg-secondary border-b border-border-primary h-12 shrink-0">
         <div className="flex items-center gap-md">
           <h1 className="text-base font-semibold text-text-accent font-mono">EMERGENCE</h1>
           {/* Simulation health indicator */}
-          <div className="relative group">
-            <span
-              className={cn(
-                "w-2.5 h-2.5 rounded-full inline-block cursor-help",
-                HEALTH_COLORS[health.level],
-                HEALTH_GLOW[health.level],
-                health.level === "red" && "animate-pulse-dot",
-              )}
-            />
-            {/* Tooltip */}
-            <div className="absolute top-full left-0 mt-1 z-50 hidden group-hover:block">
-              <div className="bg-bg-elevated border border-border-primary rounded-sm px-md py-sm text-xs font-mono whitespace-nowrap shadow-lg">
-                <div className="text-text-secondary uppercase tracking-wide text-2xs mb-1">
-                  Simulation Health
-                </div>
-                {health.issues.map((issue, i) => (
-                  <div key={i} className="text-text-primary">{issue}</div>
-                ))}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "w-2.5 h-2.5 rounded-full inline-block cursor-help",
+                  HEALTH_COLORS[health.level],
+                  HEALTH_GLOW[health.level],
+                  health.level === "red" && "animate-pulse-dot",
+                )}
+              />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start">
+              <div className="text-text-secondary uppercase tracking-wide text-2xs mb-1">
+                Simulation Health
               </div>
-            </div>
-          </div>
+              {health.issues.map((issue, i) => (
+                <div key={i} className="text-text-primary">{issue}</div>
+              ))}
+            </TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-lg">
           <div className="flex items-center gap-xs font-mono text-xs">
@@ -566,9 +573,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-xs font-mono text-xs">
             <span className="text-text-secondary">ERA</span>
-            <span className="inline-flex items-center px-1.5 rounded-[10px] text-2xs font-mono font-semibold bg-lifecycle/15 text-lifecycle">
-              {currentEra}
-            </span>
+            <Badge variant="lifecycle">{currentEra}</Badge>
           </div>
           <div className="flex items-center gap-xs font-mono text-xs">
             <span className="text-text-secondary">SEASON</span>
@@ -796,6 +801,7 @@ export default function App() {
         </div>
       )}
     </div>
+    </TooltipProvider>
   );
 }
 

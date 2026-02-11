@@ -33,6 +33,8 @@ import type {
   Route,
 } from "../types/generated/index.ts";
 import { cn } from "../lib/utils.ts";
+import type { ChartTooltipData } from "./ui/chart-tooltip.tsx";
+import { ChartTooltip } from "./ui/chart-tooltip.tsx";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -391,13 +393,17 @@ function drawLocationNode(
   isSelected: boolean,
   heatmapMode: boolean,
   onSelect: (id: string) => void,
+  onHover?: (event: MouseEvent, loc: PositionedLocation) => void,
+  onLeave?: () => void,
 ): void {
   const nodeG = layer
     .append("g")
     .attr("cursor", "pointer")
     .on("click", () => {
       onSelect(loc.id);
-    });
+    })
+    .on("mouseenter", (event: MouseEvent) => onHover?.(event, loc))
+    .on("mouseleave", () => onLeave?.());
 
   const regionColor = REGION_COLORS[loc.region] ?? "#8b949e";
   const hasAgents = loc.agentCount > 0;
@@ -725,6 +731,7 @@ export default function WorldMap({
   const [showTrails, setShowTrails] = useState(true);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [hoveredRoute, setHoveredRoute] = useState<string | null>(null);
+  const [mapTooltip, setMapTooltip] = useState<ChartTooltipData | null>(null);
 
   // Agent count per location
   const agentCounts = useMemo(() => {
@@ -1069,8 +1076,26 @@ export default function WorldMap({
         .attr("stroke", "transparent")
         .attr("stroke-width", 12)
         .attr("cursor", "pointer")
-        .on("mouseenter", () => setHoveredRoute(routeKey))
-        .on("mouseleave", () => setHoveredRoute(null));
+        .on("mouseenter", (event: MouseEvent) => {
+          setHoveredRoute(routeKey);
+          const container = containerRef.current;
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          setMapTooltip({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            title: "Route",
+            rows: [
+              { label: "Type", value: route.pathType },
+              { label: "Cost", value: `${route.cost} ticks` },
+              { label: "Durability", value: `${route.durability}/${route.maxDurability}` },
+            ],
+          });
+        })
+        .on("mouseleave", () => {
+          setHoveredRoute(null);
+          setMapTooltip(null);
+        });
 
       // Cost label (show on hover or always for compact routes)
       const mid = routeMidpoint(fromCoord, toCoord);
@@ -1119,6 +1144,22 @@ export default function WorldMap({
         loc.id === selectedLocationId,
         showHeatmap,
         onSelectLocation,
+        (event: MouseEvent, hoveredLoc: PositionedLocation) => {
+          const container = containerRef.current;
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          setMapTooltip({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            title: hoveredLoc.name,
+            rows: [
+              { label: "Region", value: hoveredLoc.region },
+              { label: "Type", value: hoveredLoc.location_type },
+              { label: "Agents", value: String(hoveredLoc.agentCount) },
+            ],
+          });
+        },
+        () => setMapTooltip(null),
       );
     }
 
@@ -1224,6 +1265,9 @@ export default function WorldMap({
               onSelectAgent={onSelectAgent}
             />
           )}
+
+        {/* Chart tooltip for map elements */}
+        <ChartTooltip data={mapTooltip} />
 
         {/* Heatmap legend (Phase 9.5.4) */}
         {showHeatmap && <HeatmapLegend />}

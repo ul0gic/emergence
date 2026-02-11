@@ -202,6 +202,35 @@ fn food_at_location(perception: &Perception) -> Option<Resource> {
         .copied()
 }
 
+/// Base gather yield, mirroring the constant from `emergence-agents` costs.
+///
+/// We duplicate the value here rather than taking a crate dependency to keep
+/// the rule engine self-contained. If the costs module value changes, update
+/// this constant as well.
+const BASE_GATHER_YIELD: u32 = 3;
+
+/// Parse the `carry_load` string (e.g. "26/50") into `(current, max)`.
+///
+/// Returns `None` if the string is malformed — callers should treat a parse
+/// failure as "unknown capacity" and conservatively skip the gather.
+fn parse_carry_load(carry_load: &str) -> Option<(u32, u32)> {
+    let (current_str, max_str) = carry_load.split_once('/')?;
+    let current: u32 = current_str.trim().parse().ok()?;
+    let max: u32 = max_str.trim().parse().ok()?;
+    Some((current, max))
+}
+
+/// Check whether the agent has room in inventory for a gather action.
+///
+/// Returns `true` if `current_load + BASE_GATHER_YIELD <= max_capacity`.
+/// Returns `false` (conservatively) if the carry load cannot be parsed.
+fn has_inventory_room(perception: &Perception) -> bool {
+    let Some((current, max)) = parse_carry_load(&perception.self_state.carry_load) else {
+        return false;
+    };
+    current.checked_add(BASE_GATHER_YIELD).is_some_and(|total| total <= max)
+}
+
 /// Check whether the given action name is in the agent's available actions list.
 fn action_available(perception: &Perception, action_name: &str) -> bool {
     let lower = action_name.to_lowercase();
@@ -350,8 +379,10 @@ fn try_routine_action_inner(perception: &Perception) -> Option<(String, ActionRe
     }
 
     // Rule 7: Very hungry but no food -- gather food if available at location
+    // Guard: skip gather if inventory is full (would be rejected by validation).
     if state.hunger >= GATHER_FOOD_HUNGER
         && best_food_in_inventory(inventory).is_none()
+        && has_inventory_room(perception)
         && action_available(perception, "gather")
         && let Some(food) = food_at_location(perception)
     {
@@ -991,6 +1022,7 @@ mod tests {
             BTreeMap::new(), default_actions(),
         );
         p.surroundings.agents_here.push(VisibleAgent {
+            id: emergence_types::AgentId::new(),
             name: "Stranger".to_owned(),
             sex: Sex::Male,
             relationship: "unknown".to_owned(),
@@ -1138,6 +1170,111 @@ mod tests {
         );
         // Hungry, no food in inventory, no food at location -> nothing to do
         let result = try_routine_action(&p);
+        assert!(result.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Inventory capacity checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_carry_load_valid() {
+        assert_eq!(parse_carry_load("26/50"), Some((26, 50)));
+        assert_eq!(parse_carry_load("0/50"), Some((0, 50)));
+        assert_eq!(parse_carry_load("50/50"), Some((50, 50)));
+        assert_eq!(parse_carry_load("0/0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn parse_carry_load_with_whitespace() {
+        assert_eq!(parse_carry_load(" 10 / 50 "), Some((10, 50)));
+    }
+
+    #[test]
+    fn parse_carry_load_malformed() {
+        assert_eq!(parse_carry_load(""), None);
+        assert_eq!(parse_carry_load("abc"), None);
+        assert_eq!(parse_carry_load("10/"), None);
+        assert_eq!(parse_carry_load("/50"), None);
+        assert_eq!(parse_carry_load("ten/fifty"), None);
+    }
+
+    #[test]
+    fn no_gather_when_inventory_full() {
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::FoodBerry, "plentiful".to_owned());
+        let mut p = make_perception(
+            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        // Set carry load to exactly full
+        p.self_state.carry_load = "50/50".to_owned();
+        let result = try_routine_action(&p);
+        // Inventory full -> gather skipped -> no other rule fires -> None
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn no_gather_when_inventory_nearly_full() {
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::FoodBerry, "plentiful".to_owned());
+        let mut p = make_perception(
+            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        // Only 2 units of room but BASE_GATHER_YIELD is 3 -> no room
+        p.self_state.carry_load = "48/50".to_owned();
+        let result = try_routine_action(&p);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn gather_when_inventory_has_exact_room() {
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::FoodBerry, "plentiful".to_owned());
+        let mut p = make_perception(
+            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        // Exactly BASE_GATHER_YIELD (3) units of room -> gather should fire
+        p.self_state.carry_load = "47/50".to_owned();
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        assert_eq!(action.action_type, ActionType::Gather);
+    }
+
+    #[test]
+    fn hungry_with_food_eats_even_when_inventory_full() {
+        // Agent is hungry AND has food in inventory AND inventory is full.
+        // Rule 6 (eat) should fire before Rule 7 (gather) is even considered.
+        let mut inv = BTreeMap::new();
+        inv.insert(Resource::FoodBerry, 5);
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::FoodBerry, "plentiful".to_owned());
+        let mut p = make_perception(
+            50, 80, 65, inv, TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        p.self_state.carry_load = "50/50".to_owned();
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        // Eats (Rule 6) rather than attempting to gather
+        assert_eq!(action.action_type, ActionType::Eat);
+    }
+
+    #[test]
+    fn malformed_carry_load_skips_gather() {
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::FoodBerry, "plentiful".to_owned());
+        let mut p = make_perception(
+            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        p.self_state.carry_load = "broken".to_owned();
+        let result = try_routine_action(&p);
+        // Malformed carry_load -> has_inventory_room returns false -> gather skipped
         assert!(result.is_none());
     }
 

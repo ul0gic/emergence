@@ -351,8 +351,15 @@ impl AgentRunner {
             );
         }
 
-        // Step 6: Parse the response (pass known_routes for Move name→UUID fallback)
-        let decision = parse_llm_response(&raw_response, &perception.known_routes);
+        // Step 6: Parse the response (pass known_routes for Move name→UUID fallback,
+        // and agent name map for target_agent name→UUID fallback)
+        let agent_name_map: std::collections::BTreeMap<String, AgentId> = perception
+            .surroundings
+            .agents_here
+            .iter()
+            .map(|a| (a.name.clone(), a.id))
+            .collect();
+        let decision = parse_llm_response(&raw_response, &perception.known_routes, &agent_name_map);
 
         // Step 7: Scan communication messages for exploitation (Phase 5.4.3)
         if let ActionParameters::Communicate { ref message, .. }
@@ -758,7 +765,7 @@ mod tests {
 
         // Mock LLM response
         let raw_response = r#"{"action_type": "Gather", "parameters": {"resource": "Wood"}, "reasoning": "Need wood for shelter"}"#;
-        let decision = parse_llm_response(raw_response, &[]);
+        let decision = parse_llm_response(raw_response, &[], &std::collections::BTreeMap::new());
         assert_eq!(decision.action_type, ActionType::Gather);
 
         let action = ActionRequest {
@@ -811,7 +818,7 @@ mod tests {
         // Simulate: secondary succeeds
         let secondary_response =
             r#"{"action_type": "Rest", "parameters": {}, "reasoning": "Primary was down"}"#;
-        let decision = parse_llm_response(secondary_response, &[]);
+        let decision = parse_llm_response(secondary_response, &[], &std::collections::BTreeMap::new());
         assert_eq!(decision.action_type, ActionType::Rest);
 
         // Simulate: both fail -> NoAction
@@ -847,6 +854,7 @@ mod tests {
         // Add agents and social actions to push into Medium.
         perception.surroundings.agents_here = vec![
             emergence_types::VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "Neighbor".to_owned(),
                 sex: emergence_types::Sex::Male,
                 relationship: "friendly (0.5)".to_owned(),

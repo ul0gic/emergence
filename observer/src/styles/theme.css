@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* shadcn/ui animation utilities (animate-in, fade-in, zoom-in, slide-in, etc.) */
+@plugin "tailwindcss-animate";
+
 /* Token layers */
 @import "./tokens/colors.css";
 @import "./tokens/typography.css";

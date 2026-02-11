@@ -311,6 +311,7 @@ mod tests {
         let mut perception = solo_survival_perception();
         perception.surroundings.agents_here = vec![
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "Neighbor".to_owned(),
                 sex: Sex::Male,
                 relationship: "neutral (0.0)".to_owned(),
@@ -329,6 +330,7 @@ mod tests {
         // Add 1 agent (1 point) + social actions (2 points) = 3 => Medium.
         perception.surroundings.agents_here = vec![
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "Friend".to_owned(),
                 sex: Sex::Female,
                 relationship: "friendly (0.6)".to_owned(),
@@ -349,6 +351,7 @@ mod tests {
         // 1 agent (1) + 1 message (1) + trade actions (2) = 4 => Medium.
         perception.surroundings.agents_here = vec![
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "Trader".to_owned(),
                 sex: Sex::Male,
                 relationship: "neutral (0.0)".to_owned(),
@@ -375,12 +378,14 @@ mod tests {
         // 2 agents (2) + governance (3) + social (2) = 7 => High.
         perception.surroundings.agents_here = vec![
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "Leader".to_owned(),
                 sex: Sex::Male,
                 relationship: "friendly (0.8)".to_owned(),
                 activity: "legislating".to_owned(),
             },
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "Follower".to_owned(),
                 sex: Sex::Female,
                 relationship: "neutral (0.3)".to_owned(),
@@ -426,18 +431,21 @@ mod tests {
         // + many memories (1) = 16 => High.
         perception.surroundings.agents_here = vec![
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "A".to_owned(),
                 sex: Sex::Male,
                 relationship: "hostile (-0.5)".to_owned(),
                 activity: "fighting".to_owned(),
             },
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "B".to_owned(),
                 sex: Sex::Female,
                 relationship: "friendly (0.7)".to_owned(),
                 activity: "gathering".to_owned(),
             },
             VisibleAgent {
+                id: emergence_types::AgentId::new(),
                 name: "C".to_owned(),
                 sex: Sex::Male,
                 relationship: "neutral (0.0)".to_owned(),
@@ -478,11 +486,11 @@ mod tests {
         let mut perception = solo_survival_perception();
         // 5 agents should still only contribute 3 points (capped).
         perception.surroundings.agents_here = vec![
-            VisibleAgent { name: "A".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "B".to_owned(), sex: Sex::Female, relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "C".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "D".to_owned(), sex: Sex::Female, relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "E".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { id: emergence_types::AgentId::new(), name: "A".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { id: emergence_types::AgentId::new(), name: "B".to_owned(), sex: Sex::Female, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { id: emergence_types::AgentId::new(), name: "C".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { id: emergence_types::AgentId::new(), name: "D".to_owned(), sex: Sex::Female, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { id: emergence_types::AgentId::new(), name: "E".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
         ];
 
         let raw = compute_raw_score(&perception);

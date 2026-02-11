@@ -1255,7 +1255,12 @@ fn execute_single_gather(
         }
         Err(err) => {
             warn!(tick, ?agent_id, %err, "Gather execution failed");
-            results.insert(agent_id, make_rejection(tick, agent_id, ActionType::Gather, RejectionReason::CapacityExceeded));
+            let reason = if matches!(err, emergence_agents::AgentError::InventoryOverflow { .. }) {
+                RejectionReason::CapacityExceeded
+            } else {
+                RejectionReason::InvalidAction
+            };
+            results.insert(agent_id, make_rejection(tick, agent_id, ActionType::Gather, reason));
         }
     }
 }
