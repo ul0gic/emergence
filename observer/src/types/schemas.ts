@@ -364,16 +364,16 @@ export const InjectedEventTypeSchema = z.enum([
 
 export const OperatorStatusSchema = z.object({
   tick: z.number(),
+  paused: z.boolean(),
+  stop_requested: z.boolean(),
+  tick_interval_ms: z.number(),
   elapsed_seconds: z.number(),
   max_ticks: z.number(),
   max_real_time_seconds: z.number(),
-  paused: z.boolean(),
-  tick_interval_ms: z.number(),
   agents_alive: z.number(),
-  agents_dead: z.number(),
-  era: z.string(),
-  season: z.string(),
-  uptime_seconds: z.number(),
+  agents_total: z.number(),
+  end_reason: z.string().nullable().optional(),
+  started_at: z.string(),
 });
 
 export const InjectEventRequestSchema = z.object({

@@ -4,7 +4,7 @@
 //! validates the response into an [`ActionParameters`] from `emergence-types`.
 //! Malformed responses are handled gracefully by returning `NoAction`.
 
-use emergence_types::{ActionParameters, ActionType};
+use emergence_types::{ActionParameters, ActionType, KnownRoute};
 use tracing::warn;
 
 use crate::error::RunnerError;
@@ -50,8 +50,11 @@ struct RawLlmResponse {
 /// 3. Strip trailing commas and retry
 ///
 /// If all attempts fail, returns [`ActionType::NoAction`] with a warning log.
-pub fn parse_llm_response(raw: &str) -> ParsedDecision {
-    match try_parse(raw) {
+///
+/// When `known_routes` is provided, Move actions can resolve location names
+/// to UUIDs (fallback for LLMs that send names instead of IDs).
+pub fn parse_llm_response(raw: &str, known_routes: &[KnownRoute]) -> ParsedDecision {
+    match try_parse(raw, known_routes) {
         Ok(decision) => decision,
         Err(e) => {
             warn!(
@@ -65,32 +68,32 @@ pub fn parse_llm_response(raw: &str) -> ParsedDecision {
 }
 
 /// Attempt to parse the response through multiple recovery strategies.
-fn try_parse(raw: &str) -> Result<ParsedDecision, RunnerError> {
+fn try_parse(raw: &str, known_routes: &[KnownRoute]) -> Result<ParsedDecision, RunnerError> {
     let trimmed = raw.trim();
 
     // Strategy 1: direct parse
     if let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(trimmed) {
-        return convert_raw_response(parsed);
+        return convert_raw_response(parsed, known_routes);
     }
 
     // Strategy 2: extract from markdown code block
     if let Some(json_str) = extract_json_from_codeblock(trimmed)
         && let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(json_str)
     {
-        return convert_raw_response(parsed);
+        return convert_raw_response(parsed, known_routes);
     }
 
     // Strategy 3: strip trailing commas and retry
     let cleaned = strip_trailing_commas(trimmed);
     if let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(&cleaned) {
-        return convert_raw_response(parsed);
+        return convert_raw_response(parsed, known_routes);
     }
 
     // Strategy 4: extract from code block then strip commas
     if let Some(json_str) = extract_json_from_codeblock(trimmed) {
         let cleaned_inner = strip_trailing_commas(json_str);
         if let Ok(parsed) = serde_json::from_str::<RawLlmResponse>(&cleaned_inner) {
-            return convert_raw_response(parsed);
+            return convert_raw_response(parsed, known_routes);
         }
     }
 
@@ -100,9 +103,9 @@ fn try_parse(raw: &str) -> Result<ParsedDecision, RunnerError> {
 }
 
 /// Convert a deserialized raw response into a typed decision.
-fn convert_raw_response(raw: RawLlmResponse) -> Result<ParsedDecision, RunnerError> {
+fn convert_raw_response(raw: RawLlmResponse, known_routes: &[KnownRoute]) -> Result<ParsedDecision, RunnerError> {
     let action_type = parse_action_type(&raw.action_type)?;
-    let parameters = build_parameters(action_type, &raw.parameters)?;
+    let parameters = build_parameters(action_type, &raw.parameters, known_routes)?;
 
     Ok(ParsedDecision {
         action_type,
@@ -158,6 +161,7 @@ fn parse_action_type(s: &str) -> Result<ActionType, RunnerError> {
 fn build_parameters(
     action_type: ActionType,
     params: &serde_json::Value,
+    known_routes: &[KnownRoute],
 ) -> Result<ActionParameters, RunnerError> {
     match action_type {
         ActionType::Gather => {
@@ -185,11 +189,34 @@ fn build_parameters(
                 .get("destination")
                 .ok_or_else(|| RunnerError::Parse("Move requires 'destination' parameter".to_owned()))?;
             let dest_str = dest.as_str().unwrap_or("");
-            let uuid = uuid::Uuid::parse_str(dest_str)
-                .map_err(|e| RunnerError::Parse(format!("invalid destination UUID: {e}")))?;
-            Ok(ActionParameters::Move {
-                destination: emergence_types::LocationId::from(uuid),
-            })
+
+            // Try parsing as UUID first
+            if let Ok(uuid) = uuid::Uuid::parse_str(dest_str) {
+                return Ok(ActionParameters::Move {
+                    destination: emergence_types::LocationId::from(uuid),
+                });
+            }
+
+            // Fallback: resolve location name to UUID via known routes
+            let name_lower = dest_str.to_lowercase();
+            for route in known_routes {
+                if route.destination.to_lowercase() == name_lower {
+                    if let Ok(uuid) = uuid::Uuid::parse_str(&route.destination_id) {
+                        warn!(
+                            name = dest_str,
+                            resolved_id = %route.destination_id,
+                            "Move destination resolved from name to UUID"
+                        );
+                        return Ok(ActionParameters::Move {
+                            destination: emergence_types::LocationId::from(uuid),
+                        });
+                    }
+                }
+            }
+
+            Err(RunnerError::Parse(format!(
+                "Move destination '{dest_str}' is not a valid UUID and does not match any known route"
+            )))
         }
         ActionType::Build => {
             let st = params
@@ -314,7 +341,7 @@ mod tests {
     #[test]
     fn parse_valid_gather() {
         let raw = r#"{"action_type": "Gather", "parameters": {"resource": "Wood"}, "reasoning": "I need wood"}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::Gather);
         assert!(matches!(
             decision.parameters,
@@ -326,7 +353,7 @@ mod tests {
     #[test]
     fn parse_valid_rest() {
         let raw = r#"{"action_type": "Rest", "parameters": {}, "reasoning": "I am tired"}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::Rest);
         assert!(matches!(decision.parameters, ActionParameters::Rest));
     }
@@ -334,14 +361,14 @@ mod tests {
     #[test]
     fn parse_noaction() {
         let raw = r#"{"action_type": "NoAction", "parameters": {}}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::NoAction);
     }
 
     #[test]
     fn parse_case_insensitive() {
         let raw = r#"{"action_type": "gather", "parameters": {"resource": "Stone"}}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::Gather);
     }
 
@@ -354,34 +381,34 @@ mod tests {
 ```
 
 I chose to drink because I am thirsty."#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::Drink);
     }
 
     #[test]
     fn parse_trailing_comma() {
         let raw = r#"{"action_type": "Rest", "parameters": {}, "reasoning": "tired",}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::Rest);
     }
 
     #[test]
     fn parse_garbage_returns_noaction() {
         let raw = "I think I should gather some wood. Let me do that.";
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::NoAction);
     }
 
     #[test]
     fn parse_empty_returns_noaction() {
-        let decision = parse_llm_response("");
+        let decision = parse_llm_response("", &[]);
         assert_eq!(decision.action_type, ActionType::NoAction);
     }
 
     #[test]
     fn parse_with_goal_updates() {
         let raw = r#"{"action_type": "Gather", "parameters": {"resource": "Wood"}, "goal_update": ["build shelter", "explore north"]}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::Gather);
         assert_eq!(decision.goal_updates.len(), 2);
     }
@@ -417,18 +444,18 @@ I chose to drink because I am thirsty."#;
     #[test]
     fn parse_snake_case_action_types() {
         let raw = r#"{"action_type": "no_action", "parameters": {}}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::NoAction);
 
         let raw2 = r#"{"action_type": "trade_offer", "parameters": {"target_agent": "01945c2a-3b4f-7def-8a12-bc34567890ab", "offer": {"Wood": 5}, "request": {"Stone": 3}}}"#;
-        let decision2 = parse_llm_response(raw2);
+        let decision2 = parse_llm_response(raw2, &[]);
         assert_eq!(decision2.action_type, ActionType::TradeOffer);
     }
 
     #[test]
     fn parse_broadcast() {
         let raw = r#"{"action_type": "Broadcast", "parameters": {"message": "Hello everyone!"}}"#;
-        let decision = parse_llm_response(raw);
+        let decision = parse_llm_response(raw, &[]);
         assert_eq!(decision.action_type, ActionType::Broadcast);
         assert!(matches!(
             decision.parameters,

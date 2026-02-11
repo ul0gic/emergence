@@ -609,7 +609,7 @@ function DeathPieChart({ data }: { data: { cause: string; count: number }[] }) {
 
 interface DeathEntry {
   name: string;
-  sex: "Male" | "Female";
+  sex: "Male" | "Female" | undefined;
   age: number;
   cause: string;
   tick: number;

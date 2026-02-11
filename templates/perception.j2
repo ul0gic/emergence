@@ -25,7 +25,7 @@ Weather: {{ weather }}
 {% endfor %}{% endif %}
 
 {% if known_routes %}### Routes From Here
-{% for route in known_routes %}  - {{ route.destination }} ({{ route.cost }}, {{ route.path_type }})
+{% for route in known_routes %}  - {{ route.destination }} [id: {{ route.destination_id }}] ({{ route.cost }}, {{ route.path_type }}) -- resources: {{ route.resources_hint }}
 {% endfor %}{% endif %}
 
 {% if notifications %}### Notifications

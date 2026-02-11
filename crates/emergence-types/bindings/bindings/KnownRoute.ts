@@ -5,6 +5,10 @@
  */
 export type KnownRoute = { 
 /**
+ * Destination location UUID (use this in Move actions).
+ */
+destination_id: string, 
+/**
  * Destination location name.
  */
 destination: string, 
@@ -15,4 +19,8 @@ cost: string,
 /**
  * Path quality description (e.g. "dirt trail").
  */
-path_type: string, };
+path_type: string, 
+/**
+ * Key resources available at the destination (fuzzy quantities).
+ */
+resources_hint: string, };

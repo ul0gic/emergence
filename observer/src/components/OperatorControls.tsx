@@ -74,9 +74,12 @@ function getEffectiveRate(intervalMs: number): string {
 }
 
 function getSimulationStatusLabel(status: OperatorStatus): string {
+  if (status.end_reason) return "Completed";
+  if (status.stop_requested) return "Stopping";
   if (status.paused) return "Paused";
-  if (status.elapsed_seconds >= status.max_real_time_seconds) return "Completed";
-  if (status.tick >= status.max_ticks) return "Completed";
+  if (status.max_real_time_seconds > 0 && status.elapsed_seconds >= status.max_real_time_seconds)
+    return "Completed";
+  if (status.max_ticks > 0 && status.tick >= status.max_ticks) return "Completed";
   return "Running";
 }
 
@@ -87,6 +90,8 @@ function getSimulationStatusClasses(status: OperatorStatus): string {
       return "bg-success/15 text-success";
     case "Paused":
       return "bg-warning/15 text-warning";
+    case "Stopping":
+      return "bg-danger/15 text-danger";
     case "Completed":
       return "bg-info/15 text-info";
     default:
@@ -236,7 +241,7 @@ export default function OperatorControls({
             <div className="text-lg font-bold text-text-primary font-mono">
               {formatNumber(status.agents_alive)}
               <span className="text-2xs text-text-muted font-normal ml-1">
-                / {formatNumber(status.agents_alive + status.agents_dead)}
+                / {formatNumber(status.agents_total)}
               </span>
             </div>
           </div>
@@ -355,7 +360,7 @@ export default function OperatorControls({
             <div className="flex-1">
               <label className="block text-2xs text-text-muted font-mono mb-xs">Event Type</label>
               <select
-                className="w-full px-md py-sm bg-bg-primary border border-border-primary rounded-sm text-text-primary font-mono text-xs outline-none focus:border-text-accent"
+                className="w-full px-lg h-10 bg-bg-primary border border-border-primary rounded-sm text-text-primary font-mono text-sm outline-none focus:border-text-accent"
                 value={selectedEventType}
                 onChange={(e) => setSelectedEventType(e.target.value as InjectedEventType)}
               >
@@ -371,7 +376,7 @@ export default function OperatorControls({
                 Target Region <span className="text-text-muted">(optional)</span>
               </label>
               <select
-                className="w-full px-md py-sm bg-bg-primary border border-border-primary rounded-sm text-text-primary font-mono text-xs outline-none focus:border-text-accent"
+                className="w-full px-lg h-10 bg-bg-primary border border-border-primary rounded-sm text-text-primary font-mono text-sm outline-none focus:border-text-accent"
                 value={selectedRegion}
                 onChange={(e) => setSelectedRegion(e.target.value)}
               >
@@ -432,12 +437,14 @@ export default function OperatorControls({
           <div className="bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm">
             <div className="text-2xs text-text-muted font-mono">Uptime</div>
             <div className="text-sm font-semibold text-text-primary font-mono">
-              {formatElapsed(status.uptime_seconds)}
+              {formatElapsed(status.elapsed_seconds)}
             </div>
           </div>
           <div className="bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm">
-            <div className="text-2xs text-text-muted font-mono">Era</div>
-            <div className="text-sm font-semibold text-text-primary font-mono">{status.era}</div>
+            <div className="text-2xs text-text-muted font-mono">Dead</div>
+            <div className="text-sm font-semibold text-text-primary font-mono">
+              {formatNumber(status.agents_total - status.agents_alive)}
+            </div>
           </div>
           <div className="bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm">
             <div className="text-2xs text-text-muted font-mono">WebSocket</div>

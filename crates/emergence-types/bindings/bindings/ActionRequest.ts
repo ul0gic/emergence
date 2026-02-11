@@ -27,4 +27,8 @@ parameters: ActionParameters,
 /**
  * Real-world submission timestamp.
  */
-submitted_at: string, };
+submitted_at: string, 
+/**
+ * Goal updates from the agent's LLM response (applied in reflection phase).
+ */
+goal_updates: Array<string>, };

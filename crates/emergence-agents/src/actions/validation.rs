@@ -474,6 +474,15 @@ fn validate_resources(
             } else {
                 return Err(RejectionReason::UnavailableTarget);
             }
+            // Check inventory has room for the expected gather yield
+            let current_load: u32 = agent_state.inventory.values().sum();
+            let skill_level = agent_state.skills.get("gathering").copied().unwrap_or(0);
+            let expected_yield =
+                crate::skills::effects::gathering_yield(costs::BASE_GATHER_YIELD, skill_level)
+                    .unwrap_or(costs::BASE_GATHER_YIELD);
+            if current_load.saturating_add(expected_yield) > agent_state.carry_capacity {
+                return Err(RejectionReason::CapacityExceeded);
+            }
         }
         (ActionType::Eat, ActionParameters::Eat { food_type }) => {
             // Agent must have the food in inventory

@@ -483,16 +483,16 @@ export type InjectedEventType =
 
 export interface OperatorStatus {
   tick: number;
+  paused: boolean;
+  stop_requested: boolean;
+  tick_interval_ms: number;
   elapsed_seconds: number;
   max_ticks: number;
   max_real_time_seconds: number;
-  paused: boolean;
-  tick_interval_ms: number;
   agents_alive: number;
-  agents_dead: number;
-  era: string;
-  season: string;
-  uptime_seconds: number;
+  agents_total: number;
+  end_reason: string | null;
+  started_at: string;
 }
 
 export interface InjectEventRequest {

@@ -57,7 +57,7 @@ Location: {{ self_state.location_name }}
 - Carrying: {{ self_state.carry_load }}
 
 {% if self_state.inventory %}## Inventory
-{% for resource, amount in self_state.inventory %}  - {{ resource }}: {{ amount }}
+{% for resource, amount in self_state.inventory|items %}  - {{ resource }}: {{ amount }}
 {% endfor %}{% endif %}
 
 {% if self_state.active_goals %}## Your Goals

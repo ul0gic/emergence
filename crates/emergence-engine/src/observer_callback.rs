@@ -136,6 +136,8 @@ impl TickCallback for ObserverCallback {
                         "action_type": format!("{:?}", result.action_type),
                         "success": result.success,
                         "side_effects": result.side_effects,
+                        "reason": result.rejection.as_ref().map(|r| format!("{:?}", r.reason)),
+                        "message": result.rejection.as_ref().map(|r| &r.message),
                     }),
                     agent_state_snapshot: agent_snap,
                     world_context: world_ctx.clone(),

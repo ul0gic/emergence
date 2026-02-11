@@ -89,7 +89,7 @@ export default function EconomyMonitor({
         <span>Economy Monitor</span>
         <span className="text-xs font-normal">Gini: {formatGini(economy.gini_coefficient)}</span>
       </div>
-      <div className="p-md flex-1 overflow-y-auto">
+      <div className="p-md pb-xl flex-1 overflow-y-auto">
         {/* Top stats */}
         <div className="flex gap-sm mb-md flex-wrap">
           <div className="flex-1 min-w-[90px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
@@ -205,9 +205,9 @@ export default function EconomyMonitor({
 // ---------------------------------------------------------------------------
 
 function LorenzCurve({
-  economy,
+  economy: _economy,
   giniCoefficient,
-  agents,
+  agents: _agents,
 }: {
   economy: EconomyStats;
   giniCoefficient: string;
@@ -607,8 +607,8 @@ function ResourceDistributionChart({
     svg.selectAll("*").remove();
 
     const width = 500;
-    const height = 140;
-    const margin = { top: 8, right: 10, bottom: 32, left: 40 };
+    const height = 200;
+    const margin = { top: 8, right: 10, bottom: 60, left: 40 };
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 
@@ -721,8 +721,8 @@ function ActivityChart({ tickHistory }: { tickHistory: TickBroadcast[] }) {
     }
 
     const width = 500;
-    const height = 100;
-    const margin = { top: 8, right: 30, bottom: 20, left: 36 };
+    const height = 140;
+    const margin = { top: 8, right: 30, bottom: 24, left: 36 };
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 

@@ -908,7 +908,7 @@ function GenealogyTree({
 function ComparisonMode({
   primaryDetail,
   agents,
-  agentNameMap,
+  agentNameMap: _agentNameMap,
 }: {
   primaryDetail: AgentDetailResponse;
   agents: AgentListItem[];
@@ -1308,8 +1308,8 @@ function KnowledgeDiff({
 function SkillsComparison({
   skillsA,
   skillsB,
-  nameA,
-  nameB,
+  nameA: _nameA,
+  nameB: _nameB,
 }: {
   skillsA: Record<string, number | undefined>;
   skillsB: Record<string, number | undefined>;
