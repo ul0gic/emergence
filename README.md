@@ -366,24 +366,27 @@ emergence/
 │   ├── design-system.md            #   Observer UI design system
 │   └── changelog.md                #   Version history
 │
-├── crates/                         # Rust workspace (7 crates)
+├── crates/                         # Rust workspace (10 crates)
 │   ├── emergence-types/            #   Shared types + ts-rs TypeScript generation
 │   │   ├── src/                    #     Rust type definitions
 │   │   └── bindings/               #     Auto-generated TypeScript interfaces
-│   ├── emergence-core/             #   Tick cycle, clock, perception, decisions, feasibility, operator state
+│   ├── emergence-core/             #   Tick cycle, clock, perception, decisions, feasibility, operator state, experiments
 │   ├── emergence-world/            #   Geography, environment, farming, structures
 │   ├── emergence-agents/           #   Agent state, vitals, actions, social, trade, theft, combat, deception, diplomacy
 │   ├── emergence-ledger/           #   Central ledger, double-entry bookkeeping
-│   ├── emergence-db/               #   PostgreSQL + Dragonfly data layer
-│   │   └── migrations/             #     SQL schema migrations
-│   ├── emergence-observer/         #   Axum HTTP/WebSocket API + operator control endpoints
-│   └── emergence-runner/           #   Agent Runner binary (LLM orchestration, rule engine, complexity routing)
+│   ├── emergence-events/           #   Event store operations
+│   ├── emergence-db/               #   PostgreSQL + Dragonfly data layer, experiment snapshots
+│   │   └── migrations/             #     SQL schema migrations (0001-0009)
+│   ├── emergence-engine/           #   World Engine binary (spawner, NATS bridge, observer callback)
+│   ├── emergence-observer/         #   Axum HTTP/WebSocket API, operator endpoints, social APIs, anomaly detection, alerts
+│   └── emergence-runner/           #   Agent Runner binary (LLM orchestration, rule engine, complexity routing, containment scanning)
 │
 ├── observer/                       # React Observer Dashboard
 │   └── src/
 │       ├── components/             #   WorldMap, AgentInspector, EconomyMonitor,
 │       │                           #   SocialGraph, Timeline, PopulationTracker,
-│       │                           #   DiscoveryLog, OperatorControls
+│       │                           #   DiscoveryLog, OperatorControls, DecisionViewer,
+│       │                           #   SocialConstructs
 │       ├── hooks/                  #   useApi, useWebSocket
 │       ├── styles/                 #   Tailwind v4 design system
 │       │   ├── theme.css           #     Entry point
@@ -435,12 +438,13 @@ REFLECT   -->  Update memory based on outcome
 
 | Attribute | Description |
 |---|---|
+| **Sex** | Male or Female -- assigned at birth, required for reproduction (opposite-sex only), visible to other agents |
 | **Personality** | 8-dimensional vector (curiosity, cooperation, aggression, risk tolerance, industriousness, sociability, honesty, loyalty) -- immutable, inherited with mutation during reproduction |
-| **Memory** | Tiered: immediate, short-term, long-term. Older memories are compressed. |
+| **Memory** | Tiered: immediate, short-term, long-term. Older memories compressed with importance scoring. Reflection triggers fire on context-relevant high-importance memories. |
 | **Knowledge** | What this agent has learned. Starts from seed knowledge. Grows through experience. |
 | **Skills** | Farming, building, trading, medicine -- improve with use |
 | **Social Graph** | Relationships with other agents (trust scores, interaction history) |
-| **Vitals** | Energy, health, hunger -- depleted by actions, restored by food and rest |
+| **Vitals** | Energy, health, hunger, thirst -- independent tracks, each with critical thresholds and death conditions |
 
 ### Open Action System
 
@@ -459,7 +463,7 @@ This means agents can steal, attack, intimidate, propose alliances, vote, marry,
 
 ### Reproduction
 
-Two agents with high mutual trust can reproduce, spawning a child with blended personality, inherited knowledge, zero resources, and a dependency period. Population caps prevent runaway growth.
+One male and one female agent with high mutual trust can reproduce, spawning a child with random sex, blended personality (with mutation), inherited knowledge subset, zero resources, and a dependency period. Population caps prevent runaway growth. Auto-population recovery maintains a configurable minimum floor (default: 2), with gender-balanced spawning to ensure reproductive viability.
 
 ---
 
@@ -482,14 +486,17 @@ A web dashboard served on the host network (invisible to agents):
 
 | Panel | Description |
 |---|---|
-| **World Map** | Schematic continent with regions, locations, routes, agent positions |
-| **Agent Inspector** | Deep dive into any agent's state, memory, personality radar, decision history |
-| **Economy Monitor** | Resource flows, wealth distribution, Gini coefficient, trade volumes |
+| **World Map** | Fictional continent with regions, locations, color-coded routes, agent movement trails, resource heatmap overlay, location detail popups with capacity/resources/occupants, toggleable agent name labels |
+| **Agent Inspector** | Tabbed deep dive: Overview (vitals, personality radar, inventory), Activity Timeline (chronological action feed), Biography (auto-generated narrative), Vitals Sparklines (SVG trend charts), Genealogy Tree (D3 family visualization), Comparison Mode (side-by-side radar/vitals/knowledge diff) |
+| **Agent Minds** | LLM decision viewer: full prompt inspector, raw response viewer, cost dashboard ($ per tick/cumulative/per agent), decision source badges (LLM/Rule/Sleep), rule engine loop detection with "STUCK IN LOOP" alerts |
+| **Economy Monitor** | Resource flows, Lorenz curve + Gini coefficient, resource flow Sankey diagram, trade volumes |
 | **Social Graph** | Force-directed relationship network with trust scores |
-| **Timeline** | Scrollable event history, filterable by agent/type/region |
-| **Population Tracker** | Births, deaths, population curves, average lifespan |
-| **Discovery Log** | Knowledge milestones: *"Agent_012 discovered AGRICULTURE at tick 892"* |
-| **Operator Controls** | Pause/resume, variable tick speed (6 presets), event injection, emergency stop, simulation status + countdown |
+| **Timeline** | Human-readable event narratives, severity color-coding, tick grouping with expandable cards, death memorial cards, event statistics |
+| **Population Tracker** | Births, deaths, population curves, cause-of-death donut chart, lifespan histogram by generation, sex ratio display |
+| **Social Constructs** | 6 sub-tabs: Beliefs, Governance, Family, Economy, Crime, Civilization Timeline — all wired to live detection APIs |
+| **Discovery Log** | Knowledge milestones with era tracking |
+| **Operator Controls** | Pause/resume, variable tick speed, event injection, agent spawning (name + location), simulation restart, emergency stop, status + countdown |
+| **Dashboard Polish** | Toast notifications (deaths, discoveries, trades), simulation health bar (traffic-light), keyboard shortcuts overlay (?), dark/light mode toggle, data export (JSON bundle) |
 
 ---
 
@@ -499,11 +506,14 @@ This simulation runs in a fully isolated environment. Agents cannot escape.
 
 - Isolated VLAN -- no route to production network or internet
 - Docker rootless mode -- non-root, minimal capabilities
-- Seccomp profiles -- dangerous syscalls blocked
+- **Seccomp profiles** -- custom `security/seccomp-emergence.json` blocks dangerous syscalls (ptrace, mount, chroot, execve); deny-by-default with explicit allow-list
 - Read-only filesystem inside agent containers
 - No Docker socket exposure
+- **LLM escape detection** -- every LLM response scanned for URL patterns, system commands, prompt injection attempts, and infrastructure awareness indicators
+- **Agent content scanning** -- agent communications checked for base64/hex encoded data, social engineering patterns, and context escape attempts
+- **Alert system** -- `GET /api/alerts` with severity levels (info/warning/critical), categories (containment/population/economy/milestone/anomaly), and acknowledgment flow
+- **Behavioral anomaly detection** -- k-means clustering of agent behavior vectors, outlier flagging at 2 standard deviations from nearest cluster
 - Observer controls are one-way operator-to-engine (pause, speed, inject events) -- never influences agent decisions
-- Host-level monitoring for breakout indicators and anomalous behavior
 
 ---
 
@@ -585,18 +595,22 @@ See [Pre-Registration Framework](#pre-registration-framework) for details.
 ## Build Progress
 
 ```
-Phase 0: Project Setup       ████████████████████  100%
-Phase 1: Foundation          ████████████████████  100%
-Phase 2: Primitive World     ████████████████████  100%
-Phase 3: Society             ████████████████████  100%
-Phase 4: Complexity          ████████████████████  100%
-Phase 5: Scale & Research    ░░░░░░░░░░░░░░░░░░░░    0%
-Phase 6: Open World          ██████████████░░░░░░   51%
-──────────────────────────────────────────────────────
-Overall                      ████████████████░░░░   78%
+Phase 0:  Project Setup           ████████████████████  100%
+Phase 1:  Foundation              ████████████████████  100%
+Phase 2:  Primitive World         ████████████████████  100%
+Phase 3:  Society                 ████████████████████  100%
+Phase 4:  Complexity              ████████████████████  100%
+Phase 5:  Scale & Research        ████████████████████  100%
+Phase 6:  Open World & Emergence  ███████████████████░   95%
+Phase 7:  Integration & First Run ██████████████████░░   85%
+Phase 8:  Feedback Integration    ███████████████████░   93%
+Phase 9:  Observer Overhaul       ███████████████████░   94%
+Phase 10: Simulation Fixes        ██████████████████░░   90%
+──────────────────────────────────────────────────────────
+Overall                           ███████████████████░   97%
 ```
 
-140 of 174 tasks complete. Phases 0-4 done. Phase 6.1-6.3 done (bounded simulations, operator controls, LLM routing, open action system, conflict, diplomacy). Phase 6.4+ and Phase 5 remain.
+274 of 282 tasks complete. All feature code is done. The 8 remaining tasks are BUILD CHECK items requiring a live Docker run with real LLM calls.
 
 ---
 
