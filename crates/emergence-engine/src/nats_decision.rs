@@ -205,6 +205,7 @@ fn make_no_action(agent_id: AgentId, tick: u64) -> ActionRequest {
         action_type: ActionType::NoAction,
         parameters: ActionParameters::NoAction,
         submitted_at: Utc::now(),
+        goal_updates: Vec::new(),
     }
 }
 
@@ -318,6 +319,7 @@ mod tests {
             recent_memory: Vec::new(),
             available_actions: Vec::new(),
             notifications: Vec::new(),
+            personality: None,
         }
     }
 
@@ -377,6 +379,7 @@ mod tests {
                     resource: Resource::Wood,
                 },
                 submitted_at: Utc::now(),
+                goal_updates: Vec::new(),
             },
         );
 
@@ -409,6 +412,7 @@ mod tests {
             action_type: ActionType::Rest,
             parameters: ActionParameters::Rest,
             submitted_at: Utc::now(),
+            goal_updates: Vec::new(),
         };
 
         let serialized = serde_json::to_vec(&action).unwrap();

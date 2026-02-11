@@ -288,6 +288,9 @@ pub struct ActionRequest {
     pub parameters: ActionParameters,
     /// Real-world submission timestamp.
     pub submitted_at: DateTime<Utc>,
+    /// Goal updates from the agent's LLM response (applied in reflection phase).
+    #[serde(default)]
+    pub goal_updates: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

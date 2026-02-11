@@ -19,7 +19,7 @@
 //! 5. **Persist** -- (stub) flush state changes and events. In production this
 //!    writes to Dragonfly and `PostgreSQL`; in Phase 2 it is a no-op.
 //!
-//! 6. **Reflection** -- (stub) post-tick analysis. Reserved for future phases.
+//! 6. **Reflection** -- create memories from action results, apply goal updates.
 //!
 //! The tick cycle is deterministic given the same initial state and decision
 //! source outputs.
@@ -200,7 +200,7 @@ pub struct SimulationState {
 /// 3. Decision (via the provided `DecisionSource`)
 /// 4. Resolution
 /// 5. Persist (stub)
-/// 6. Reflection (stub)
+/// 6. Reflection
 pub fn run_tick(
     state: &mut SimulationState,
     decision_source: &mut dyn DecisionSource,
@@ -253,8 +253,11 @@ pub fn run_tick(
     // --- Phase 5: Persist (stub) ---
     debug!(tick, "Persist phase (stub)");
 
-    // --- Phase 6: Reflection (stub) ---
-    debug!(tick, "Reflection phase (stub)");
+    // --- Phase 6: Reflection ---
+    {
+        let _span = tracing::info_span!("phase_reflection").entered();
+        phase_reflection(state, &decisions, &action_results, tick);
+    }
 
     let agents_alive = u32::try_from(state.alive_agents.len()).unwrap_or(u32::MAX);
 
@@ -795,12 +798,15 @@ fn phase_perception(
                 .get(&agent_id)
                 .map_or("Unknown", String::as_str);
 
-            let agent_sex = state
-                .agents
-                .get(&agent_id)
-                .map_or(emergence_types::Sex::Female, |a| a.sex);
+            let agent = state.agents.get(&agent_id);
 
-            let p = perception::assemble_perception(agent_state, agent_name, agent_sex, ctx);
+            let agent_sex = agent.map_or(emergence_types::Sex::Female, |a| a.sex);
+
+            let personality = agent.map(|a| &a.personality);
+
+            let p = perception::assemble_perception(
+                agent_state, agent_name, agent_sex, personality, ctx,
+            );
             perceptions.insert(agent_id, p);
         }
     }
@@ -863,10 +869,20 @@ fn build_location_context(
             let first_route = routes.first()?;
             let cost_str = format!("{} ticks", first_route.cost_ticks);
             let path_str = format!("{:?}", first_route.path_type);
+            let resources_hint = dest_loc
+                .location
+                .base_resources
+                .values()
+                .filter(|node| node.available > 0)
+                .map(|node| format!("{:?}", node.resource))
+                .collect::<Vec<_>>()
+                .join(", ");
             Some(emergence_types::KnownRoute {
+                destination_id: dest_id.to_string(),
                 destination: dest_loc.location.name.clone(),
                 cost: cost_str,
                 path_type: path_str,
+                resources_hint,
             })
         })
         .collect();
@@ -1021,6 +1037,7 @@ fn categorize_and_validate(
                             action_type: resolved_action.action_type,
                             parameters: resolved_action.parameters,
                             submitted_at: request.submitted_at,
+                            goal_updates: request.goal_updates.clone(),
                         };
                         debug!(
                             tick, ?agent_id,
@@ -1409,6 +1426,73 @@ fn make_rejection(
             message: format!("{reason:?}"),
         }),
         side_effects: Vec::new(),
+    }
+}
+
+/// Phase 6: Reflection.
+///
+/// After all actions are resolved:
+/// 1. Create memory entries for each agent's action result
+/// 2. Apply goal updates from LLM decisions to agent state
+fn phase_reflection(
+    state: &mut SimulationState,
+    decisions: &BTreeMap<AgentId, ActionRequest>,
+    results: &BTreeMap<AgentId, ActionResult>,
+    tick: u64,
+) {
+    use emergence_types::MemoryEntry;
+    use rust_decimal::Decimal;
+
+    /// Maximum number of memory entries per agent.
+    const MAX_MEMORY: usize = 50;
+
+    for (&agent_id, result) in results {
+        let Some(agent_state) = state.agent_states.get_mut(&agent_id) else {
+            continue;
+        };
+
+        // --- Memory creation ---
+        let summary = if result.success {
+            format!("I performed {:?} successfully.", result.action_type)
+        } else {
+            let reason = result.rejection.as_ref().map_or_else(
+                || "unknown reason".to_owned(),
+                |r| format!("{:?}", r.reason),
+            );
+            format!(
+                "I tried {:?} but it was rejected: {}.",
+                result.action_type, reason
+            )
+        };
+
+        // Weight: successes = 0.3, failures = 0.5 (failures are more memorable)
+        let weight = if result.success {
+            Decimal::new(3, 1)
+        } else {
+            Decimal::new(5, 1)
+        };
+
+        let memory = MemoryEntry::action(tick, summary, vec![agent_id.into_inner()], weight);
+        agent_state.memory.push(memory);
+
+        // Cap memory at MAX_MEMORY entries (oldest first)
+        if agent_state.memory.len() > MAX_MEMORY {
+            let drain_count = agent_state.memory.len().saturating_sub(MAX_MEMORY);
+            agent_state.memory.drain(..drain_count);
+        }
+
+        // --- Goal writeback ---
+        if let Some(request) = decisions.get(&agent_id) {
+            if !request.goal_updates.is_empty() {
+                agent_state.goals.clone_from(&request.goal_updates);
+                debug!(
+                    tick,
+                    agent_id = %agent_id,
+                    goals = ?agent_state.goals,
+                    "Updated agent goals from LLM response"
+                );
+            }
+        }
     }
 }
 

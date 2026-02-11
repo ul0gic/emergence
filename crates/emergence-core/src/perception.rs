@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use emergence_types::{
-    AgentId, AgentState, Message, Perception, Resource, Season, SelfState, Sex,
+    AgentId, AgentState, Message, Perception, Personality, Resource, Season, SelfState, Sex,
     Surroundings, TimeOfDay, VisibleAgent, VisibleMessage, Weather,
 };
 
@@ -69,10 +69,11 @@ pub fn assemble_perception(
     agent_state: &AgentState,
     agent_name: &str,
     agent_sex: Sex,
+    personality: Option<&Personality>,
     ctx: &PerceptionContext,
 ) -> Perception {
     // Build self-state
-    let self_state = build_self_state(agent_state, agent_name, agent_sex);
+    let self_state = build_self_state(agent_state, agent_name, agent_sex, &ctx.location_name);
 
     // Build surroundings with fuzzy resource quantities
     let surroundings = build_surroundings(agent_state.agent_id, ctx);
@@ -103,11 +104,12 @@ pub fn assemble_perception(
         recent_memory,
         available_actions,
         notifications,
+        personality: personality.cloned(),
     }
 }
 
 /// Build the agent's self-state view.
-fn build_self_state(agent: &AgentState, name: &str, sex: Sex) -> SelfState {
+fn build_self_state(agent: &AgentState, name: &str, sex: Sex, location_name: &str) -> SelfState {
     let total_weight = emergence_agents::inventory::total_weight(&agent.inventory).unwrap_or(0);
     let carry_load = format!("{total_weight}/{}", agent.carry_capacity);
 
@@ -126,7 +128,7 @@ fn build_self_state(agent: &AgentState, name: &str, sex: Sex) -> SelfState {
         health: agent.health,
         hunger: agent.hunger,
         thirst: agent.thirst,
-        location_name: String::new(), // Set by caller from context
+        location_name: String::from(location_name),
         inventory: agent.inventory.clone(),
         carry_load,
         active_goals: agent.goals.clone(),
@@ -369,7 +371,7 @@ mod tests {
         let state = make_agent_state(agent_id);
         let ctx = make_context(42);
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert_eq!(p.tick, 42);
         assert_eq!(p.season, Season::Spring);
         assert_eq!(p.weather, Weather::Clear);
@@ -381,7 +383,7 @@ mod tests {
         let state = make_agent_state(agent_id);
         let ctx = make_context(1);
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert_eq!(p.self_state.id, agent_id);
         assert_eq!(p.self_state.name, "Alpha");
         assert_eq!(p.self_state.energy, 80);
@@ -395,7 +397,7 @@ mod tests {
         let state = make_agent_state(agent_id);
         let ctx = make_context(1);
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
 
         // Wood=50 -> "abundant"
         assert_eq!(
@@ -423,7 +425,7 @@ mod tests {
         ctx.agent_names.insert(agent_id, String::from("Alpha"));
         ctx.agent_names.insert(other_id, String::from("Beta"));
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert_eq!(p.surroundings.agents_here.len(), 1);
         assert_eq!(p.surroundings.agents_here.first().map(|a| a.name.as_str()), Some("Beta"));
     }
@@ -560,7 +562,7 @@ mod tests {
         let mut ctx = make_context(5);
         ctx.messages_here.push(make_broadcast_message("Dax", 4, "Hello everyone!"));
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert_eq!(p.surroundings.messages_here.len(), 1);
         assert_eq!(p.surroundings.messages_here[0].from, "Dax");
         assert_eq!(p.surroundings.messages_here[0].content, "Hello everyone!");
@@ -573,7 +575,7 @@ mod tests {
         let mut ctx = make_context(5);
         ctx.messages_here.push(make_direct_message("Maren", agent_id, 4, "Hey Alpha!"));
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert_eq!(p.surroundings.messages_here.len(), 1);
         assert_eq!(p.surroundings.messages_here[0].content, "Hey Alpha!");
     }
@@ -587,7 +589,7 @@ mod tests {
         // Direct message to another agent
         ctx.messages_here.push(make_direct_message("Maren", other_id, 4, "Secret"));
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert!(p.surroundings.messages_here.is_empty());
     }
 
@@ -601,7 +603,7 @@ mod tests {
         ctx.messages_here.push(make_direct_message("Maren", agent_id, 4, "For you"));
         ctx.messages_here.push(make_direct_message("Zane", other_id, 4, "Not for you"));
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         // Should see broadcast + direct to self, not the one for other
         assert_eq!(p.surroundings.messages_here.len(), 2);
     }
@@ -616,7 +618,7 @@ mod tests {
         // Message at tick 15 is not expired (15 >= 10)
         ctx.messages_here.push(make_broadcast_message("Maren", 15, "Recent message"));
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert_eq!(p.surroundings.messages_here.len(), 1);
         assert_eq!(p.surroundings.messages_here[0].content, "Recent message");
     }
@@ -629,7 +631,7 @@ mod tests {
         // Message at exactly tick 10 should be included (10 >= 10)
         ctx.messages_here.push(make_broadcast_message("Dax", 10, "Boundary message"));
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert_eq!(p.surroundings.messages_here.len(), 1);
     }
 
@@ -639,7 +641,7 @@ mod tests {
         let state = make_agent_state(agent_id);
         let ctx = make_context(5);
 
-        let p = assemble_perception(&state, "Alpha", Sex::Male, &ctx);
+        let p = assemble_perception(&state, "Alpha", Sex::Male, None, &ctx);
         assert!(p.surroundings.messages_here.is_empty());
     }
 }

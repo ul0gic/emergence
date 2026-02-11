@@ -92,6 +92,7 @@ impl DecisionSource for StubDecisionSource {
                     action_type: ActionType::NoAction,
                     parameters: ActionParameters::NoAction,
                     submitted_at: Utc::now(),
+                    goal_updates: Vec::new(),
                 },
             );
         }
@@ -141,6 +142,7 @@ mod tests {
             recent_memory: Vec::new(),
             available_actions: Vec::new(),
             notifications: Vec::new(),
+            personality: None,
         }
     }
 

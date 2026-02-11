@@ -13,7 +13,7 @@ use ts_rs::TS;
 
 use crate::enums::{Resource, Season, TimeOfDay, Weather};
 use crate::ids::AgentId;
-use crate::structs::{Sex, VisibleMessage, VisibleStructure};
+use crate::structs::{Personality, Sex, VisibleMessage, VisibleStructure};
 
 // ---------------------------------------------------------------------------
 // 8.1 Perception
@@ -44,6 +44,8 @@ pub struct Perception {
     pub available_actions: Vec<String>,
     /// System notifications (approaching winter, low health, etc.).
     pub notifications: Vec<String>,
+    /// The agent's personality traits (if known). Shapes decision-making.
+    pub personality: Option<Personality>,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,10 +134,14 @@ pub struct VisibleAgent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct KnownRoute {
+    /// Destination location UUID (use this in Move actions).
+    pub destination_id: String,
     /// Destination location name.
     pub destination: String,
     /// Travel cost as a formatted string (e.g. "3 ticks").
     pub cost: String,
     /// Path quality description (e.g. "dirt trail").
     pub path_type: String,
+    /// Key resources available at the destination (fuzzy quantities).
+    pub resources_hint: String,
 }

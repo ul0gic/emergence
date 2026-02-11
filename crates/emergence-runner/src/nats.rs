@@ -298,6 +298,7 @@ mod tests {
                     recent_memory: Vec::new(),
                     available_actions: Vec::new(),
                     notifications: Vec::new(),
+                    personality: None,
                 }
             })
         });

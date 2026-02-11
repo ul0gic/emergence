@@ -444,6 +444,7 @@ fn make_eat_action(agent_id: AgentId, tick: u64, food: Resource) -> ActionReques
         action_type: ActionType::Eat,
         parameters: ActionParameters::Eat { food_type: food },
         submitted_at: Utc::now(),
+        goal_updates: Vec::new(),
     }
 }
 
@@ -455,6 +456,7 @@ fn make_drink_action(agent_id: AgentId, tick: u64) -> ActionRequest {
         action_type: ActionType::Drink,
         parameters: ActionParameters::Drink,
         submitted_at: Utc::now(),
+        goal_updates: Vec::new(),
     }
 }
 
@@ -466,6 +468,7 @@ fn make_gather_action(agent_id: AgentId, tick: u64, resource: Resource) -> Actio
         action_type: ActionType::Gather,
         parameters: ActionParameters::Gather { resource },
         submitted_at: Utc::now(),
+        goal_updates: Vec::new(),
     }
 }
 
@@ -477,6 +480,7 @@ fn make_rest_action(agent_id: AgentId, tick: u64) -> ActionRequest {
         action_type: ActionType::Rest,
         parameters: ActionParameters::Rest,
         submitted_at: Utc::now(),
+        goal_updates: Vec::new(),
     }
 }
 
@@ -552,6 +556,7 @@ mod tests {
             recent_memory: Vec::new(),
             available_actions,
             notifications: Vec::new(),
+            personality: None,
         }
     }
 

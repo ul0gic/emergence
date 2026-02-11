@@ -351,8 +351,8 @@ impl AgentRunner {
             );
         }
 
-        // Step 6: Parse the response
-        let decision = parse_llm_response(&raw_response);
+        // Step 6: Parse the response (pass known_routes for Move name→UUID fallback)
+        let decision = parse_llm_response(&raw_response, &perception.known_routes);
 
         // Step 7: Scan communication messages for exploitation (Phase 5.4.3)
         if let ActionParameters::Communicate { ref message, .. }
@@ -395,6 +395,7 @@ impl AgentRunner {
                 action_type: decision.action_type,
                 parameters: decision.parameters,
                 submitted_at: Utc::now(),
+                goal_updates: decision.goal_updates,
             },
             meta,
         ))
@@ -635,6 +636,7 @@ fn no_action_request(agent_id: AgentId, tick: u64) -> ActionRequest {
         action_type: ActionType::NoAction,
         parameters: ActionParameters::NoAction,
         submitted_at: Utc::now(),
+        goal_updates: Vec::new(),
     }
 }
 
@@ -706,6 +708,7 @@ mod tests {
                 recent_memory: Vec::new(),
                 available_actions: vec!["gather".to_owned(), "rest".to_owned(), "move".to_owned()],
                 notifications: Vec::new(),
+                personality: None,
             }
         })
     }
@@ -755,7 +758,7 @@ mod tests {
 
         // Mock LLM response
         let raw_response = r#"{"action_type": "Gather", "parameters": {"resource": "Wood"}, "reasoning": "Need wood for shelter"}"#;
-        let decision = parse_llm_response(raw_response);
+        let decision = parse_llm_response(raw_response, &[]);
         assert_eq!(decision.action_type, ActionType::Gather);
 
         let action = ActionRequest {
@@ -764,6 +767,7 @@ mod tests {
             action_type: decision.action_type,
             parameters: decision.parameters,
             submitted_at: Utc::now(),
+            goal_updates: decision.goal_updates,
         };
         assert_eq!(action.action_type, ActionType::Gather);
         assert_eq!(action.tick, 10);
@@ -807,7 +811,7 @@ mod tests {
         // Simulate: secondary succeeds
         let secondary_response =
             r#"{"action_type": "Rest", "parameters": {}, "reasoning": "Primary was down"}"#;
-        let decision = parse_llm_response(secondary_response);
+        let decision = parse_llm_response(secondary_response, &[]);
         assert_eq!(decision.action_type, ActionType::Rest);
 
         // Simulate: both fail -> NoAction

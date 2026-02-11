@@ -292,6 +292,7 @@ mod tests {
             recent_memory: Vec::new(),
             available_actions: vec!["gather".to_owned(), "rest".to_owned(), "move".to_owned()],
             notifications: Vec::new(),
+            personality: None,
         }
     }
 
