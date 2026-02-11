@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/dragonfly-latest-00a3e0?style=for-the-badge" alt="Dragonfly" />
   <img src="https://img.shields.io/badge/nats-pub%2Fsub-27aae1?style=for-the-badge&logo=nats.io&logoColor=white" alt="NATS" />
   <img src="https://img.shields.io/badge/docker-rootless-2496ed?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
-  <img src="https://img.shields.io/badge/status-pre--alpha-red?style=for-the-badge" alt="Pre-Alpha" />
+  <img src="https://img.shields.io/badge/status-on_hold-orange?style=for-the-badge" alt="On Hold" />
 </p>
 
 <h1 align="center">EMERGENCE</h1>
@@ -18,13 +18,34 @@
 
 ---
 
+## Current Status: On Hold
+
+**The infrastructure works. The agents don't.**
+
+All simulation systems are built and tested (1,456 Rust tests passing, zero TypeScript errors, clean Docker deployment). The World Engine correctly manages resources, vitals, locations, seasons, weather, a double-entry ledger, and a full event store. The Observer dashboard renders everything in real time. The rule engine, complexity scorer, and LLM routing all function correctly.
+
+The problem is that **current LLMs cannot drive the emergent behavior this project was designed to study**. After thousands of ticks across multiple runs, agents:
+
+- Cannot keep themselves alive without the rule engine force-feeding them
+- Never explore beyond their spawn location
+- Never trade, build, reproduce, teach, or form lasting relationships
+- Spend 95% of ticks in a Gather/Eat/Drink/Rest loop
+- When the LLM does get control, it fixates on personality role-play over survival (one agent literally starved to death with food in inventory because "forming a group aligns with my cooperative nature")
+- Communication actions are one-sided monologues that produce no social change
+
+The core hypothesis -- that LLM-driven agents can spontaneously develop civilization-like behavior -- is not supported by current model capabilities. See [`.project/problem-statement.md`](.project/problem-statement.md) for the full analysis, root cause breakdown, and options for future direction.
+
+**This codebase has value as infrastructure** independent of the LLM hypothesis. The World Engine, event system, ledger, observer dashboard, and containment layer are solid and reusable. Someone with better ideas about agent architectures (behavior trees, multi-turn reasoning, hybrid approaches, or future models with genuine planning capability) could pick this up and run with it.
+
+---
+
 ## What is this?
 
-Emergence is a persistent simulation environment where autonomous LLM-powered agents inhabit a resource-constrained world, make decisions every tick, and face the consequences of those decisions across their entire lifespans. Agents perceive their local environment, reason through an LLM inference call, act on the world, and update their memory based on outcomes. Everything that happens -- culture, commerce, governance, technology -- arises from agent interactions, not from scripted behavior.
+Emergence is a persistent simulation environment where autonomous LLM-powered agents inhabit a resource-constrained world, make decisions every tick, and face the consequences of those decisions across their entire lifespans. Agents perceive their local environment, reason through an LLM inference call, act on the world, and update their memory based on outcomes. Everything that happens -- culture, commerce, governance, technology -- is intended to arise from agent interactions, not from scripted behavior.
 
 This is a **computational study of multi-agent LLM social dynamics**. The goal is to observe *how* social structures, economic patterns, and cultural practices form and restructure over time when LLM agents operate under survival pressure, finite resources, and persistent memory.
 
-**An honest framing:** We do not yet know whether the social dynamics that emerge from LLM agents constitute genuine emergence or sophisticated recapitulation of patterns absorbed during training. LLMs are trained on vast corpora of human history, sociology, and fiction -- agents may "reinvent" agriculture not through independent reasoning but because the training data contains agricultural societies. This is a fundamental confound that early runs are designed to probe, not to resolve. The interesting question is not "does X emerge?" but "how does X form, and does it diverge from the training data prior?"
+**An honest framing:** Early runs have shown that LLMs are text completion engines, not goal-directed agents. They cannot plan multi-step, they do not learn from failure, and they prioritize personality role-play over rational self-interest. Whether this limitation is fundamental to current architectures or solvable with better prompting, models, or hybrid approaches remains an open question.
 
 **The core question:** *Given resources, constraints, and freedom -- what social dynamics do LLM agents produce? How do they organize? Where do their trajectories converge with human patterns, and where do they diverge?*
 
@@ -335,7 +356,7 @@ erDiagram
 | **Hot State** | Dragonfly | Redis-compatible, multi-threaded. Handles parallel perception reads at 200+ agents. |
 | **Event Store** | PostgreSQL 18 | Append-only partitioned events. JSONB payloads. Proven for financial ledger ops. |
 | **Event Bus** | NATS | Lightweight pub/sub. Subject-based routing: `tick.1205.perception.agent_042`. |
-| **Observer** | React 19 + TypeScript + D3.js + Tailwind v4 | Types generated from Rust via ts-rs. Zod runtime validation. Zero `any`. |
+| **Observer** | React 19 + TypeScript + D3.js + Tailwind v4 + shadcn/ui | Types generated from Rust via ts-rs. Zod runtime validation. Zero `any`. |
 | **Infrastructure** | Docker Compose (rootless) | Isolated VLAN. Seccomp profiles. Read-only filesystems. No Docker socket inside containers. |
 
 ### LLM Strategy
@@ -364,6 +385,7 @@ emergence/
 │   ├── agent-system.md             #   Agent runtime specification
 │   ├── world-engine.md             #   World Engine technical design
 │   ├── design-system.md            #   Observer UI design system
+│   ├── problem-statement.md        #   LLM intelligence failure analysis + options
 │   └── changelog.md                #   Version history
 │
 ├── crates/                         # Rust workspace (10 crates)
@@ -387,7 +409,8 @@ emergence/
 │       │                           #   SocialGraph, Timeline, PopulationTracker,
 │       │                           #   DiscoveryLog, OperatorControls, DecisionViewer,
 │       │                           #   SocialConstructs
-│       ├── hooks/                  #   useApi, useWebSocket
+│       │   └── ui/                 #   shadcn/ui primitives (tooltip, badge, card, tabs, dialog)
+│       ├── hooks/                  #   useApi, useWebSocket, useOperator
 │       ├── styles/                 #   Tailwind v4 design system
 │       │   ├── theme.css           #     Entry point
 │       │   ├── tokens/             #     colors, typography, spacing, motion, elevation
@@ -463,7 +486,9 @@ This means agents can steal, attack, intimidate, propose alliances, vote, marry,
 
 ### Reproduction
 
-One male and one female agent with high mutual trust can reproduce, spawning a child with random sex, blended personality (with mutation), inherited knowledge subset, zero resources, and a dependency period. Population caps prevent runaway growth. Auto-population recovery maintains a configurable minimum floor (default: 2), with gender-balanced spawning to ensure reproductive viability.
+One male and one female agent with high mutual trust can reproduce, spawning a child with random sex, blended personality (with mutation), inherited knowledge subset, starter resources (5 food + 5 water), and a dependency period. Population caps prevent runaway growth. Auto-population recovery maintains a configurable minimum floor (default: 2), with gender-balanced spawning to ensure reproductive viability.
+
+**Note:** In practice, no agent has ever voluntarily initiated reproduction. All population recovery comes from the auto-spawn system.
 
 ---
 
@@ -521,13 +546,12 @@ This simulation runs in a fully isolated environment. Agents cannot escape.
 
 ### Prerequisites
 
-- Rust (2024 edition)
-- Node.js or Bun (for Observer)
-- Docker + Docker Compose
-- PostgreSQL 18+
-- An OpenRouter API key (or direct OpenAI/Anthropic keys)
+- Docker + Docker Compose (v2 plugin)
+- An OpenRouter API key (get one at [openrouter.ai/keys](https://openrouter.ai/keys))
+- Bun or Node.js (for the Observer dashboard, runs outside Docker)
+- Rust 2024 edition (only needed for local development/testing, not for running)
 
-### Setup
+### Quick Start
 
 ```bash
 # Clone
@@ -536,46 +560,80 @@ cd emergence
 
 # Environment
 cp .env.example .env
-# Edit .env with your database URLs and API keys
+# Edit .env -- you MUST set:
+#   LLM_DEFAULT_API_KEY=your_openrouter_key
+#   POSTGRES_PASSWORD=any_secure_password
 
-# Infrastructure
-docker compose up -d postgres dragonfly nats
+# Start everything (builds Docker images, runs migrations, starts simulation)
+./scripts/first-run.sh
 
-# Build World Engine + Agent Runner
-cargo build
-
-# Run migrations
-# (requires DATABASE_URL in .env)
-
-# Start Observer Dashboard
+# In a separate terminal, start the Observer dashboard
 cd observer && bun install && bun run dev
-
-# Run World Engine
-cargo run --bin emergence
-
-# Run Agent Runner
-cargo run --bin emergence-runner
+# Open http://localhost:5173 in your browser
 ```
+
+The `first-run.sh` script handles the full startup sequence: prerequisite checks, Docker image builds (Rust compilation -- slow on first run), infrastructure startup (Dragonfly, PostgreSQL, NATS), database migrations, and application services (World Engine, Agent Runner). It tails logs when done.
+
+### Docker Operations
+
+All simulation services run in Docker. Use these scripts to manage the simulation:
+
+```bash
+# Start simulation (full setup, builds if needed, runs migrations)
+./scripts/first-run.sh
+./scripts/first-run.sh --no-tail       # Start but don't tail logs
+./scripts/first-run.sh --skip-build    # Skip Docker image rebuild
+
+# Stop simulation (preserves data volumes -- can resume later)
+./scripts/stop.sh
+./scripts/stop.sh --volumes            # Stop AND delete all data
+
+# Reset simulation (destructive -- wipes all data for a fresh start)
+./scripts/reset.sh                     # Prompts for confirmation
+./scripts/reset.sh --yes               # Skip confirmation
+./scripts/reset.sh --images            # Also remove Docker images (full rebuild)
+
+# Validate running simulation (checks all services, DB, agents, events)
+./scripts/validate.sh
+./scripts/validate.sh --quiet          # Exit code only (0 = healthy, 1 = issues)
+
+# Manual Docker commands
+docker compose up -d                   # Start all services
+docker compose down                    # Stop all services
+docker compose logs -f emergence-engine emergence-runner  # Tail logs
+docker compose build --no-cache emergence-engine emergence-runner  # Rebuild Rust binaries
+```
+
+### Services
+
+| Service | Container | Exposed Port |
+|---|---|---|
+| World Engine | `emergence-engine` | `8080` (Observer API) |
+| Agent Runner | `emergence-runner` | none |
+| PostgreSQL | `emergence-postgres` | none (internal) |
+| Dragonfly | `emergence-dragonfly` | none (internal) |
+| NATS | `emergence-nats` | none (internal) |
+| Observer Dashboard | runs on host | `5173` (Vite dev server) |
+
+The Observer dashboard connects to the World Engine's Observer API on port 8080. Infrastructure services (PostgreSQL, Dragonfly, NATS) are only accessible within the Docker network.
 
 ### Build Commands
 
 ```bash
-# Rust
+# Rust (local development)
 cargo build                              # Build everything
-cargo test                               # Run tests
+cargo test --workspace                   # Run all tests (1,456 passing)
 cargo clippy -- -D warnings              # Lint (strict -- zero warnings)
 
-# Observer
+# Observer (local development)
 cd observer
-bun run dev                              # Dev server (port 3000)
+bun install                              # Install dependencies
+bun run dev                              # Dev server (port 5173)
 bun run build                            # Production build
 bun run lint                             # ESLint
 
 # Type generation (Rust -> TypeScript)
 cargo test --package emergence-types export_bindings
-
-# Full simulation
-docker compose up
 ```
 
 ### Pre-Registration (Experiment Protocol)
@@ -611,6 +669,29 @@ Overall                           ███████████████�
 ```
 
 274 of 282 tasks complete. All feature code is done. The 8 remaining tasks are BUILD CHECK items requiring a live Docker run with real LLM calls.
+
+### What's Actually Working
+
+- World Engine: tick cycle, resource regeneration, vitals, seasons, weather, spawning, death
+- Agent Runner: LLM orchestration, rule engine bypass, complexity routing, prompt templates
+- Rule engine: correctly handles eat/drink/rest, capacity checks, inventory guards
+- Perception system: personality, memory, goals, location names, inventory warnings, nearby agent resolution
+- Communication: name-to-UUID parsing, message formatting (delivery to target is still broken)
+- Economy: double-entry ledger, Gini coefficient, resource conservation
+- Observer: all 11 dashboard panels rendering, shadcn/ui tooltips, D3 charts, WebSocket updates
+- Containment: seccomp profiles, escape detection, anomaly detection
+- Infrastructure: Docker Compose with health checks, automated migrations, operational scripts
+
+### What's Not Working
+
+See [`.project/problem-statement.md`](.project/problem-statement.md) for the full analysis. Summary:
+
+- **Agents cannot sustain themselves** -- LLMs prioritize personality role-play over survival. The rule engine keeps them alive for basic needs, but the moment the LLM gets control it makes irrational choices.
+- **Zero emergent behavior** -- No trade, no building, no reproduction, no exploration, no technology, no social structures. Agents are stuck in a survival loop.
+- **Communication is broken** -- Messages are sent but never delivered to the target agent's perception in the next tick.
+- **No critical survival override** -- The rule engine needs to force-feed agents at hunger >= 85 as a post-LLM safety net. Not yet implemented.
+- **Decision timeouts** -- Some agents frequently time out waiting for LLM responses.
+- **Agents never move** -- No agent has ever chosen to explore or relocate.
 
 ---
 
@@ -687,7 +768,7 @@ See `scripts/pre-register.py` and `scripts/compare-run.py` for full documentatio
 
 ## Known Confounds
 
-These are limitations and biases inherent to the experimental platform. They should be acknowledged in any analysis of simulation results. Early runs should be treated as **exploratory observations**, not controlled experiments.
+These are limitations and biases inherent to the experimental platform. They should be acknowledged in any analysis of simulation results. Early runs have been treated as **exploratory observations** and have surfaced a fundamental limitation: current LLMs cannot drive the behavior this platform was designed to study.
 
 ### RLHF Cooperation Bias
 
@@ -712,6 +793,51 @@ The World Engine is deterministic -- given the same state and actions, it produc
 ### Prompt-Mediated Reality
 
 Agents perceive the world through structured text prompts assembled by the perception system. What the prompt includes, how it is formatted, and what it omits all shape agent behavior in ways that may not be immediately obvious. The simulation's "physics" are partially defined by prompt engineering choices, not just World Engine rules.
+
+---
+
+## Picking This Up
+
+If you want to continue this project, here is what you need to know:
+
+### The infrastructure is solid
+
+- 10-crate Rust workspace, 1,456 tests passing, zero clippy warnings
+- Full Docker deployment with health checks, migrations, operational scripts
+- Observer dashboard with 11 panels, all rendering live data
+- Double-entry ledger with conservation law enforcement
+- Pre-registration framework for scientific rigor
+
+### The agent intelligence is the problem
+
+The bottleneck is not architecture, performance, or missing features. It is that current LLMs (tested: DeepSeek V3, Claude Sonnet) cannot function as goal-directed agents in a persistent simulation. Read `.project/problem-statement.md` for the full analysis. The five options identified are:
+
+1. **Behavior tree** -- Replace LLM decision-making with deterministic state machines; use LLM only for flavor text
+2. **Multi-turn reasoning** -- Give agents a planning phase before each action (10-50x cost increase)
+3. **Hybrid milestones** -- Pre-define civilization milestones and bias agents toward them via prompt engineering
+4. **Accept the finding** -- Document that LLMs cannot drive emergent civilization and publish the result
+5. **Wait for better models** -- Architecture is ready; revisit when models gain genuine planning capability
+
+### Immediate technical fixes (regardless of direction)
+
+These bugs exist independent of the LLM intelligence problem:
+
+1. **Critical survival override** -- Rule engine must force Eat at hunger >= 85 and Drink at thirst >= 85 as a post-LLM safety net
+2. **Message delivery** -- Communicate actions send messages but they are never delivered to the target agent's next perception
+3. **Decision timeouts** -- Some agents time out every tick; needs investigation (LLM backend latency vs runner connection issues)
+4. **Movement incentive** -- Agents never move; needs either prompt engineering or rule engine handling
+
+### Key files to start with
+
+| File | What it does |
+|---|---|
+| `crates/emergence-core/src/tick.rs` | The 6-phase tick cycle -- the heart of the simulation |
+| `crates/emergence-runner/src/runner.rs` | LLM orchestration, prompt assembly, response parsing |
+| `crates/emergence-runner/src/rule_engine.rs` | Deterministic bypass for routine decisions |
+| `crates/emergence-core/src/perception.rs` | Assembles what each agent "sees" each tick |
+| `templates/*.j2` | Jinja2 prompt templates (editable without recompile) |
+| `emergence-config.yaml` | Simulation parameters (tick speed, agent count, model IDs) |
+| `.project/problem-statement.md` | Full analysis of the LLM intelligence failure |
 
 ---
 
