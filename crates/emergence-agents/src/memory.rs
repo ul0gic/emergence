@@ -11,6 +11,28 @@
 //!
 //! Memory filtering assembles the subset of memories relevant to the current
 //! perception payload, respecting a configurable token budget.
+//!
+//! ## Importance scoring
+//!
+//! [`importance_score`] evaluates a memory entry's content to produce a numeric
+//! importance rating. Social events and combat score highest (3.0), discoveries
+//! score medium-high (2.5), and routine activities score lowest (1.0). The score
+//! is computed on-demand from the memory summary text.
+//!
+//! ## Reflection triggers
+//!
+//! [`find_reflection_triggers`] scans an agent's memories for entries that are
+//! contextually relevant to the current perception -- matching the agent's
+//! current location name or the names of visible agents. High-importance matches
+//! are returned as "reflection triggers" to be injected into the LLM prompt so
+//! the agent can recall significant past events.
+//!
+//! ## Compression logging
+//!
+//! [`CompressionRecord`] captures metadata about each compression pass: how many
+//! memories were present, how many were dropped, the importance scores of dropped
+//! entries, and a human-readable summary. The record is logged via `tracing` for
+//! post-hoc analysis.
 
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -62,6 +84,185 @@ fn high_weight_threshold() -> Decimal {
 /// Threshold below which a memory is discarded (< 0.3).
 fn low_weight_threshold() -> Decimal {
     Decimal::new(3, 1)
+}
+
+// ---------------------------------------------------------------------------
+// Importance scoring (Phase 8.4.2)
+// ---------------------------------------------------------------------------
+
+// Keyword lists for importance scoring categories.
+//
+// Each list maps a set of keywords to an importance level. The keywords are
+// checked as case-insensitive substrings of the memory summary.
+
+/// Social event keywords -- score 3.0.
+const SOCIAL_KEYWORDS: &[&str] = &[
+    "betray", "alliance", "trade", "dispute", "leader", "war", "marriage",
+    "death", "born", "treaty", "divorce", "conspire", "vote", "propose",
+];
+
+/// Discovery and learning keywords -- score 2.5.
+const DISCOVERY_KEYWORDS: &[&str] = &[
+    "discover", "learn", "invent", "knowledge", "teach", "research", "craft",
+];
+
+/// Combat and conflict keywords -- score 3.0.
+const COMBAT_KEYWORDS: &[&str] = &[
+    "attack", "defend", "steal", "combat", "threat", "intimidate", "wound",
+    "kill", "fight", "raid",
+];
+
+/// Routine activity keywords -- score 1.0.
+const ROUTINE_KEYWORDS: &[&str] = &[
+    "gather", "eat", "drink", "rest", "sleep", "travel", "move", "walk",
+    "idle", "wait",
+];
+
+/// Importance score for social events.
+const IMPORTANCE_SOCIAL: f64 = 3.0;
+
+/// Importance score for discoveries.
+const IMPORTANCE_DISCOVERY: f64 = 2.5;
+
+/// Importance score for combat and conflict.
+const IMPORTANCE_COMBAT: f64 = 3.0;
+
+/// Importance score for routine activities.
+const IMPORTANCE_ROUTINE: f64 = 1.0;
+
+/// Default importance score when no keywords match.
+const IMPORTANCE_DEFAULT: f64 = 1.5;
+
+/// Evaluate the importance of a memory entry based on its summary content.
+///
+/// Returns a floating-point score:
+/// - 3.0 for social events (betray, alliance, trade, war, etc.)
+/// - 3.0 for combat/conflict (attack, defend, steal, etc.)
+/// - 2.5 for discoveries (discover, learn, invent, etc.)
+/// - 1.0 for routine activities (gather, eat, rest, travel, etc.)
+/// - 1.5 default for anything else
+///
+/// If multiple categories match, the highest score wins.
+pub fn importance_score(entry: &MemoryEntry) -> f64 {
+    let summary_lower = entry.summary.to_lowercase();
+
+    let mut best = IMPORTANCE_DEFAULT;
+
+    // Check highest-value categories first.
+    if matches_any_keyword(&summary_lower, SOCIAL_KEYWORDS) && best < IMPORTANCE_SOCIAL {
+        best = IMPORTANCE_SOCIAL;
+    }
+    if matches_any_keyword(&summary_lower, COMBAT_KEYWORDS) && best < IMPORTANCE_COMBAT {
+        best = IMPORTANCE_COMBAT;
+    }
+    if matches_any_keyword(&summary_lower, DISCOVERY_KEYWORDS) && best < IMPORTANCE_DISCOVERY {
+        best = IMPORTANCE_DISCOVERY;
+    }
+    // Routine can only lower the score from default, so only apply if nothing
+    // else matched (i.e. best is still at default).
+    if best <= IMPORTANCE_DEFAULT
+        && matches_any_keyword(&summary_lower, ROUTINE_KEYWORDS)
+    {
+        best = IMPORTANCE_ROUTINE;
+    }
+
+    best
+}
+
+/// Check whether `text` contains any of the given keywords as substrings.
+fn matches_any_keyword(text: &str, keywords: &[&str]) -> bool {
+    keywords.iter().any(|kw| text.contains(kw))
+}
+
+// ---------------------------------------------------------------------------
+// Reflection triggers (Phase 8.4.1)
+// ---------------------------------------------------------------------------
+
+/// Minimum importance score for a memory to qualify as a reflection trigger.
+const REFLECTION_IMPORTANCE_THRESHOLD: f64 = 2.5;
+
+/// Find memories that should trigger agent reflection given the current context.
+///
+/// Scans `memories` for entries that are both high-importance (score >= 2.5)
+/// and contextually relevant to the agent's current perception:
+///
+/// - The memory summary mentions the `current_location` name (case-insensitive)
+/// - The memory summary mentions any of the `visible_agents` names (case-insensitive)
+///
+/// Results are sorted by importance score descending, then by tick descending
+/// (most recent first). At most `max_results` entries are returned.
+///
+/// These memories should be injected into the LLM prompt as "reflection triggers"
+/// so the agent can recall past significant events relevant to the current moment.
+pub fn find_reflection_triggers<'a>(
+    memories: &'a [MemoryEntry],
+    current_location: &str,
+    visible_agents: &[String],
+    max_results: usize,
+) -> Vec<&'a MemoryEntry> {
+    let location_lower = current_location.to_lowercase();
+    let agent_names_lower: Vec<String> = visible_agents
+        .iter()
+        .map(|n| n.to_lowercase())
+        .collect();
+
+    let mut candidates: Vec<(f64, &'a MemoryEntry)> = memories
+        .iter()
+        .filter_map(|entry| {
+            let score = importance_score(entry);
+            if score < REFLECTION_IMPORTANCE_THRESHOLD {
+                return None;
+            }
+
+            let summary_lower = entry.summary.to_lowercase();
+
+            // Check if the memory is contextually relevant.
+            let location_match = !location_lower.is_empty()
+                && summary_lower.contains(&location_lower);
+            let agent_match = agent_names_lower
+                .iter()
+                .any(|name| !name.is_empty() && summary_lower.contains(name.as_str()));
+
+            if location_match || agent_match {
+                Some((score, entry))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Sort by importance descending, then by tick descending (most recent first).
+    candidates.sort_by(|a, b| {
+        b.0.total_cmp(&a.0).then_with(|| b.1.tick.cmp(&a.1.tick))
+    });
+
+    candidates
+        .into_iter()
+        .take(max_results)
+        .map(|(_, entry)| entry)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Compression logging (Phase 8.4.3)
+// ---------------------------------------------------------------------------
+
+/// Record of a single memory compression pass.
+///
+/// Created by [`MemoryStore::compress`] whenever memories are promoted or
+/// discarded. Contains enough information to understand what was lost and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompressionRecord {
+    /// The tick at which compression was performed.
+    pub tick: u64,
+    /// Number of memory entries before compression.
+    pub original_count: usize,
+    /// Number of memory entries after compression.
+    pub compressed_count: usize,
+    /// Importance scores of the entries that were discarded (dropped).
+    pub importance_scores_dropped: Vec<f64>,
+    /// Brief human-readable description of what happened.
+    pub summary: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +358,11 @@ impl MemoryStore {
     /// **Short-term memories** older than `short_term_retention_ticks`:
     /// - `emotional_weight` > 0.7 --> promote to [`MemoryTier::LongTerm`]
     /// - Otherwise --> discard
-    pub fn compress(&mut self, current_tick: u64) {
+    ///
+    /// Returns a [`CompressionRecord`] describing what happened during the pass.
+    /// The record is also logged via `tracing::debug!` for observability.
+    pub fn compress(&mut self, current_tick: u64) -> CompressionRecord {
+        let original_count = self.entries.len();
         let immediate_cutoff = current_tick.saturating_sub(self.config.immediate_retention_ticks);
         let short_term_cutoff = current_tick.saturating_sub(self.config.short_term_retention_ticks);
 
@@ -167,6 +372,8 @@ impl MemoryStore {
         // Process each entry in place: update tier or mark for removal.
         // We iterate once and collect indices to remove (in reverse order).
         let mut to_remove: Vec<usize> = Vec::new();
+        let mut promoted_to_long_term: usize = 0;
+        let mut promoted_to_short_term: usize = 0;
 
         let entry_count = self.entries.len();
         for i in 0..entry_count {
@@ -181,8 +388,10 @@ impl MemoryStore {
                     if entry.tick < immediate_cutoff {
                         if entry.emotional_weight > high {
                             entry.tier = MemoryTier::LongTerm;
+                            promoted_to_long_term = promoted_to_long_term.saturating_add(1);
                         } else if entry.emotional_weight >= low {
                             entry.tier = MemoryTier::ShortTerm;
+                            promoted_to_short_term = promoted_to_short_term.saturating_add(1);
                         } else {
                             to_remove.push(i);
                         }
@@ -193,6 +402,7 @@ impl MemoryStore {
                     if entry.tick < short_term_cutoff {
                         if entry.emotional_weight > high {
                             entry.tier = MemoryTier::LongTerm;
+                            promoted_to_long_term = promoted_to_long_term.saturating_add(1);
                         } else {
                             to_remove.push(i);
                         }
@@ -204,10 +414,50 @@ impl MemoryStore {
             }
         }
 
-        // Remove discarded entries in reverse index order to preserve indices
+        // Compute importance scores for entries about to be discarded.
+        let importance_scores_dropped: Vec<f64> = to_remove
+            .iter()
+            .filter_map(|&idx| self.entries.get(idx))
+            .map(importance_score)
+            .collect();
+
+        let dropped_count = to_remove.len();
+
+        // Remove discarded entries in reverse index order to preserve indices.
         for &idx in to_remove.iter().rev() {
             self.entries.swap_remove(idx);
         }
+
+        let compressed_count = self.entries.len();
+
+        // Build a human-readable summary.
+        let summary = format!(
+            "tick {current_tick}: {original_count} -> {compressed_count} entries \
+             ({dropped_count} dropped, {promoted_to_long_term} promoted to long-term, \
+             {promoted_to_short_term} promoted to short-term)"
+        );
+
+        let record = CompressionRecord {
+            tick: current_tick,
+            original_count,
+            compressed_count,
+            importance_scores_dropped,
+            summary: summary.clone(),
+        };
+
+        if dropped_count > 0 || promoted_to_long_term > 0 || promoted_to_short_term > 0 {
+            tracing::debug!(
+                tick = current_tick,
+                original_count,
+                compressed_count,
+                dropped_count,
+                promoted_to_long_term,
+                promoted_to_short_term,
+                "memory compression: {summary}"
+            );
+        }
+
+        record
     }
 
     // -----------------------------------------------------------------------
@@ -1083,5 +1333,287 @@ mod tests {
         // Weight 0.5 not > 0.7, so discarded
         store.compress(15);
         assert!(store.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Importance scoring (Phase 8.4.2)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn importance_score_social_keywords() {
+        let entry = make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::Immediate,
+            "Formed an alliance with Kora against the raiders",
+        );
+        let score = importance_score(&entry);
+        assert!((score - IMPORTANCE_SOCIAL).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn importance_score_combat_keywords() {
+        let entry = make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::Immediate,
+            "Was attacked by a hostile agent near the river",
+        );
+        let score = importance_score(&entry);
+        assert!((score - IMPORTANCE_COMBAT).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn importance_score_discovery_keywords() {
+        let entry = make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::Immediate,
+            "Discovered how to smelt iron ore",
+        );
+        let score = importance_score(&entry);
+        assert!((score - IMPORTANCE_DISCOVERY).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn importance_score_routine_keywords() {
+        let entry = make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::Immediate,
+            "Gathered berries from the bush",
+        );
+        let score = importance_score(&entry);
+        assert!((score - IMPORTANCE_ROUTINE).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn importance_score_default_for_unrecognized() {
+        let entry = make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::Immediate,
+            "Stood silently contemplating the horizon",
+        );
+        let score = importance_score(&entry);
+        assert!((score - IMPORTANCE_DEFAULT).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn importance_score_case_insensitive() {
+        let entry = make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::Immediate,
+            "BETRAYED by former ally during the night",
+        );
+        let score = importance_score(&entry);
+        assert!((score - IMPORTANCE_SOCIAL).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn importance_score_highest_category_wins() {
+        // "trade" is social (3.0), "gather" is routine (1.0) -- social should win
+        let entry = make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::Immediate,
+            "Attempted to trade while gathering resources",
+        );
+        let score = importance_score(&entry);
+        assert!((score - IMPORTANCE_SOCIAL).abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // Reflection triggers (Phase 8.4.1)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reflection_triggers_location_match() {
+        let memories = vec![
+            make_memory_with_summary(
+                1,
+                Decimal::new(9, 1),
+                MemoryTier::LongTerm,
+                "Was betrayed at the River Crossing by an ally",
+            ),
+            make_memory_with_summary(
+                2,
+                Decimal::new(5, 1),
+                MemoryTier::Immediate,
+                "Gathered berries near the forest",
+            ),
+        ];
+
+        let triggers = find_reflection_triggers(
+            &memories,
+            "River Crossing",
+            &[],
+            5,
+        );
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers.first().map(|e| e.tick), Some(1));
+    }
+
+    #[test]
+    fn reflection_triggers_agent_name_match() {
+        let memories = vec![
+            make_memory_with_summary(
+                5,
+                Decimal::new(8, 1),
+                MemoryTier::LongTerm,
+                "Kora attacked me and stole my food",
+            ),
+            make_memory_with_summary(
+                6,
+                Decimal::new(5, 1),
+                MemoryTier::ShortTerm,
+                "Talked to Mira about the weather",
+            ),
+        ];
+
+        let triggers = find_reflection_triggers(
+            &memories,
+            "Plains",
+            &[String::from("Kora"), String::from("Zev")],
+            5,
+        );
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers.first().map(|e| e.tick), Some(5));
+    }
+
+    #[test]
+    fn reflection_triggers_excludes_low_importance() {
+        // "Gathered" is routine (1.0) -- below 2.5 threshold
+        let memories = vec![make_memory_with_summary(
+            1,
+            Decimal::new(5, 1),
+            MemoryTier::ShortTerm,
+            "Gathered wood at the River Crossing",
+        )];
+
+        let triggers = find_reflection_triggers(
+            &memories,
+            "River Crossing",
+            &[],
+            5,
+        );
+        assert!(triggers.is_empty());
+    }
+
+    #[test]
+    fn reflection_triggers_respects_max_results() {
+        let memories = vec![
+            make_memory_with_summary(
+                1,
+                Decimal::new(9, 1),
+                MemoryTier::LongTerm,
+                "Alliance formed at Village Square",
+            ),
+            make_memory_with_summary(
+                2,
+                Decimal::new(9, 1),
+                MemoryTier::LongTerm,
+                "War declared at Village Square",
+            ),
+            make_memory_with_summary(
+                3,
+                Decimal::new(9, 1),
+                MemoryTier::LongTerm,
+                "Trade dispute at Village Square",
+            ),
+        ];
+
+        let triggers = find_reflection_triggers(
+            &memories,
+            "Village Square",
+            &[],
+            2,
+        );
+        assert_eq!(triggers.len(), 2);
+    }
+
+    #[test]
+    fn reflection_triggers_empty_context_returns_empty() {
+        let memories = vec![make_memory_with_summary(
+            1,
+            Decimal::new(9, 1),
+            MemoryTier::LongTerm,
+            "Betrayed at the River Crossing",
+        )];
+
+        let triggers = find_reflection_triggers(&memories, "", &[], 5);
+        assert!(triggers.is_empty());
+    }
+
+    #[test]
+    fn reflection_triggers_empty_memories_returns_empty() {
+        let triggers = find_reflection_triggers(
+            &[],
+            "River Crossing",
+            &[String::from("Kora")],
+            5,
+        );
+        assert!(triggers.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Compression record (Phase 8.4.3)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compress_returns_record_with_counts() {
+        let mut store = MemoryStore::default();
+        // High weight -> promoted to long-term
+        store.add(make_memory(0, Decimal::new(8, 1), MemoryTier::Immediate));
+        // Low weight -> discarded
+        store.add(make_memory(0, Decimal::new(1, 1), MemoryTier::Immediate));
+
+        let record = store.compress(10);
+
+        assert_eq!(record.tick, 10);
+        assert_eq!(record.original_count, 2);
+        assert_eq!(record.compressed_count, 1);
+        assert_eq!(record.importance_scores_dropped.len(), 1);
+    }
+
+    #[test]
+    fn compress_record_no_changes() {
+        let mut store = MemoryStore::default();
+        // Recent memory -- not yet eligible for compression
+        store.add(make_memory(9, Decimal::new(5, 1), MemoryTier::Immediate));
+
+        let record = store.compress(10);
+
+        assert_eq!(record.original_count, 1);
+        assert_eq!(record.compressed_count, 1);
+        assert!(record.importance_scores_dropped.is_empty());
+    }
+
+    #[test]
+    fn compress_record_summary_is_descriptive() {
+        let mut store = MemoryStore::default();
+        store.add(make_memory(0, Decimal::new(1, 1), MemoryTier::Immediate));
+
+        let record = store.compress(10);
+
+        assert!(record.summary.contains("tick 10"));
+        assert!(record.summary.contains("1 dropped"));
+    }
+
+    #[test]
+    fn compress_record_importance_scores_of_dropped() {
+        let mut store = MemoryStore::default();
+        // "Something happened nearby" has no special keywords -> default 1.5
+        store.add(make_memory(0, Decimal::new(1, 1), MemoryTier::Immediate));
+        store.add(make_memory(0, Decimal::new(2, 1), MemoryTier::Immediate));
+
+        let record = store.compress(10);
+
+        assert_eq!(record.importance_scores_dropped.len(), 2);
+        // Both have the default "Something happened nearby" summary -> 1.5
+        for &score in &record.importance_scores_dropped {
+            assert!((score - IMPORTANCE_DEFAULT).abs() < f64::EPSILON);
+        }
     }
 }

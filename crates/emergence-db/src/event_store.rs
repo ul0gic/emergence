@@ -39,9 +39,13 @@ impl<'a> EventStore<'a> {
 
     /// Batch-insert events into the `events` table.
     ///
-    /// Events are inserted in batches of configurable size for efficiency.
-    /// Each batch is wrapped in a transaction so either all events in the
-    /// batch are committed or none are.
+    /// Events are inserted in batches using multi-row VALUES clauses for
+    /// efficiency. Each batch is wrapped in a transaction so either all
+    /// events in the batch are committed or none are.
+    ///
+    /// Optimization: instead of N individual INSERT statements, each batch
+    /// uses a single INSERT with N value tuples, reducing round-trips to
+    /// `PostgreSQL` by a factor of N.
     ///
     /// # Arguments
     ///
@@ -58,42 +62,62 @@ impl<'a> EventStore<'a> {
         for chunk in events.chunks(self.batch_size) {
             let mut tx = self.pool.begin().await?;
 
-            for event in chunk {
-                let event_type_str = event_type_to_db(event.event_type);
-                let agent_id: Option<Uuid> =
-                    event.agent_id.map(emergence_types::AgentId::into_inner);
-                let location_id: Option<Uuid> =
-                    event.location_id.map(emergence_types::LocationId::into_inner);
-                let agent_snapshot_json = event
-                    .agent_state_snapshot
-                    .as_ref()
-                    .map(serde_json::to_value)
-                    .transpose()
-                    .map_err(DbError::Serialization)?;
-                let world_context_json =
-                    serde_json::to_value(&event.world_context)
-                        .map_err(DbError::Serialization)?;
+            // Pre-allocate arrays for UNNEST-based batch insert.
+            let len = chunk.len();
+            let mut ticks = Vec::with_capacity(len);
+            let mut event_types = Vec::with_capacity(len);
+            let mut agent_ids: Vec<Option<Uuid>> = Vec::with_capacity(len);
+            let mut location_ids: Vec<Option<Uuid>> = Vec::with_capacity(len);
+            let mut details_arr = Vec::with_capacity(len);
+            let mut snapshots: Vec<Option<serde_json::Value>> = Vec::with_capacity(len);
+            let mut contexts = Vec::with_capacity(len);
+            let mut timestamps = Vec::with_capacity(len);
 
-                sqlx::query(
-                    r"INSERT INTO events (tick, event_type, agent_id, location_id, details, agent_state_snapshot, world_context, created_at)
-                      VALUES ($1, $2::event_type, $3, $4, $5, $6, $7, $8)",
-                )
-                .bind(i64::try_from(event.tick).unwrap_or(i64::MAX))
-                .bind(event_type_str)
-                .bind(agent_id)
-                .bind(location_id)
-                .bind(&event.details)
-                .bind(&agent_snapshot_json)
-                .bind(&world_context_json)
-                .bind(event.created_at)
-                .execute(&mut *tx)
-                .await?;
+            for event in chunk {
+                ticks.push(i64::try_from(event.tick).unwrap_or(i64::MAX));
+                event_types.push(event_type_to_db(event.event_type).to_owned());
+                agent_ids.push(event.agent_id.map(emergence_types::AgentId::into_inner));
+                location_ids.push(
+                    event
+                        .location_id
+                        .map(emergence_types::LocationId::into_inner),
+                );
+                details_arr.push(event.details.clone());
+                snapshots.push(
+                    event
+                        .agent_state_snapshot
+                        .as_ref()
+                        .map(serde_json::to_value)
+                        .transpose()
+                        .map_err(DbError::Serialization)?,
+                );
+                contexts.push(
+                    serde_json::to_value(&event.world_context)
+                        .map_err(DbError::Serialization)?,
+                );
+                timestamps.push(event.created_at);
             }
+
+            // Multi-row INSERT using UNNEST for batch efficiency.
+            sqlx::query(
+                r"INSERT INTO events (tick, event_type, agent_id, location_id, details, agent_state_snapshot, world_context, created_at)
+                  SELECT * FROM UNNEST($1::BIGINT[], $2::event_type[], $3::UUID[], $4::UUID[], $5::JSONB[], $6::JSONB[], $7::JSONB[], $8::TIMESTAMPTZ[])",
+            )
+            .bind(&ticks)
+            .bind(&event_types)
+            .bind(&agent_ids)
+            .bind(&location_ids)
+            .bind(&details_arr)
+            .bind(&snapshots)
+            .bind(&contexts)
+            .bind(&timestamps)
+            .execute(&mut *tx)
+            .await?;
 
             tx.commit().await?;
         }
 
-        tracing::debug!(count = events.len(), "Inserted events");
+        tracing::debug!(count = events.len(), "Inserted events (batch UNNEST)");
         Ok(())
     }
 

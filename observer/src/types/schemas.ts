@@ -6,7 +6,7 @@
  */
 import { z } from "zod/v4";
 
-import type { EventsResponse } from "./generated/index.ts";
+import type { DecisionsResponse, EventsResponse } from "./generated/index.ts";
 
 // ---------------------------------------------------------------------------
 // Enum schemas
@@ -112,9 +112,12 @@ export const MemoryEntrySchema = z.object({
   tier: MemoryTierSchema,
 });
 
+export const SexSchema = z.enum(["Male", "Female"]);
+
 export const AgentSchema = z.object({
   id: UuidSchema,
   name: z.string(),
+  sex: SexSchema,
   born_at_tick: z.number(),
   died_at_tick: z.number().nullable(),
   cause_of_death: z.string().nullable(),
@@ -130,6 +133,7 @@ export const AgentStateSchema = z.object({
   energy: z.number(),
   health: z.number(),
   hunger: z.number(),
+  thirst: z.number(),
   age: z.number(),
   born_at_tick: z.number(),
   location_id: UuidSchema,
@@ -285,8 +289,10 @@ export const TickBroadcastSchema = z.object({
 export const AgentListItemSchema = z.object({
   id: UuidSchema,
   name: z.string(),
+  sex: SexSchema.optional(),
   born_at_tick: z.number(),
   died_at_tick: z.number().nullable(),
+  cause_of_death: z.string().nullable().optional(),
   generation: z.number(),
   alive: z.boolean(),
   vitals: z
@@ -331,6 +337,11 @@ export const LocationDetailResponseSchema = z.object({
       name: z.string(),
     }),
   ),
+});
+
+export const RoutesResponseSchema = z.object({
+  count: z.number(),
+  routes: z.array(RouteSchema),
 });
 
 export const EventsResponseSchema = z.object({
@@ -398,6 +409,10 @@ export function parseLocationsResponse(data: unknown) {
 
 export function parseLocationDetail(data: unknown) {
   return LocationDetailResponseSchema.parse(data);
+}
+
+export function parseRoutesResponse(data: unknown) {
+  return RoutesResponseSchema.parse(data);
 }
 
 export function parseEventsResponse(data: unknown): EventsResponse {
@@ -578,3 +593,79 @@ export const CrimeStatsSchema = z.object({
   serial_offenders: z.array(SerialOffenderSchema),
   hotspots: z.array(CrimeHotspotSchema),
 });
+
+// ---------------------------------------------------------------------------
+// Decision record schemas (Phase 9.3 — LLM Decision Viewer)
+// ---------------------------------------------------------------------------
+
+export const DecisionSourceSchema = z.enum(["llm", "rule_engine", "night_cycle", "timeout"]);
+
+export const DecisionRecordSchema = z.object({
+  agent_id: z.string(),
+  tick: z.number(),
+  decision_source: DecisionSourceSchema,
+  action_type: z.string(),
+  action_params: z.record(z.string(), JsonValueSchema).nullable(),
+  llm_backend: z.string().nullable(),
+  model: z.string().nullable(),
+  prompt_tokens: z.number().nullable(),
+  completion_tokens: z.number().nullable(),
+  cost_usd: z.number().nullable(),
+  latency_ms: z.number().nullable(),
+  raw_llm_response: z.string().nullable(),
+  prompt_sent: z.string().nullable(),
+  rule_matched: z.string().nullable(),
+  created_at: z.string(),
+});
+
+export const DecisionsResponseSchema = z.object({
+  count: z.number(),
+  decisions: z.array(DecisionRecordSchema),
+});
+
+export function parseDecisionsResponse(data: unknown): DecisionsResponse {
+  const raw = DecisionsResponseSchema.parse(data);
+  return raw as unknown as DecisionsResponse;
+}
+
+// ---------------------------------------------------------------------------
+// Social API response schemas (Phase 9.7)
+// ---------------------------------------------------------------------------
+
+export const BeliefsResponseSchema = z.object({
+  belief_systems: z.array(BeliefSystemSchema),
+  belief_events: z.array(BeliefEventSchema),
+});
+
+export const SocialEconomyResponseSchema = z.object({
+  model_type: EconomicModelTypeSchema,
+  currency_resource: ResourceSchema.nullable(),
+  currency_adoption_pct: z.number(),
+  trade_volume: z.number(),
+  trade_volume_history: z.array(z.object({ tick: z.number(), volume: z.number() })),
+  market_locations: z.array(MarketLocationSchema),
+});
+
+// ---------------------------------------------------------------------------
+// Social API parsing helpers
+// ---------------------------------------------------------------------------
+
+export function parseBeliefsResponse(data: unknown) {
+  return BeliefsResponseSchema.parse(data);
+}
+
+export function parseGovernanceResponse(data: unknown) {
+  return GovernanceInfoSchema.parse(data);
+}
+
+export function parseFamiliesResponse(data: unknown) {
+  return FamilyStatsSchema.parse(data);
+}
+
+export function parseSocialEconomyResponse(data: unknown) {
+  return SocialEconomyResponseSchema.parse(data);
+}
+
+export function parseCrimeResponse(data: unknown) {
+  return CrimeStatsSchema.parse(data);
+}

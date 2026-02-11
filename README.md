@@ -11,7 +11,7 @@
 <h1 align="center">EMERGENCE</h1>
 
 <p align="center">
-  <strong>Autonomous AI civilization simulator</strong><br />
+  <strong>Computational study of multi-agent LLM social dynamics under persistent resource constraints</strong><br />
   Agents are born. They live. They trade. They reproduce. They die.<br />
   <em>Humans only observe.</em>
 </p>
@@ -20,21 +20,53 @@
 
 ## What is this?
 
-Emergence is a fully self-contained digital civilization where autonomous AI agents start from primitive knowledge at "Year Zero" and evolve forward through time without human intervention. Agents perceive their environment, make decisions via LLM inference, act on the world, and face the consequences. Everything that happens -- culture, commerce, governance, technology -- must emerge on its own.
+Emergence is a persistent simulation environment where autonomous LLM-powered agents inhabit a resource-constrained world, make decisions every tick, and face the consequences of those decisions across their entire lifespans. Agents perceive their local environment, reason through an LLM inference call, act on the world, and update their memory based on outcomes. Everything that happens -- culture, commerce, governance, technology -- arises from agent interactions, not from scripted behavior.
 
-This is not a chatbot playground. This is a **digital anthropology experiment**.
+This is a **computational study of multi-agent LLM social dynamics**. The goal is to observe *how* social structures, economic patterns, and cultural practices form and restructure over time when LLM agents operate under survival pressure, finite resources, and persistent memory.
 
-**The core question:** *Given resources, constraints, and freedom -- what do AI agents build? How do they organize? Do they cooperate or compete? Do they replicate human history or diverge entirely?*
+**An honest framing:** We do not yet know whether the social dynamics that emerge from LLM agents constitute genuine emergence or sophisticated recapitulation of patterns absorbed during training. LLMs are trained on vast corpora of human history, sociology, and fiction -- agents may "reinvent" agriculture not through independent reasoning but because the training data contains agricultural societies. This is a fundamental confound that early runs are designed to probe, not to resolve. The interesting question is not "does X emerge?" but "how does X form, and does it diverge from the training data prior?"
+
+**The core question:** *Given resources, constraints, and freedom -- what social dynamics do LLM agents produce? How do they organize? Where do their trajectories converge with human patterns, and where do they diverge?*
 
 ### Core Principles
 
 - **Autonomous with Operator Controls** -- Once agents are seeded, operators observe and can adjust simulation parameters (pause, speed, inject events) but never control agent decisions
 - **Full Observability** -- Every action, transaction, and decision is logged as an immutable event
 - **Closed Economy** -- All resources are finite and internally circulated. There is no "outside"
-- **Emergent Behavior Only** -- Agents are not scripted. They have personality, memory, and needs. Everything else must emerge
-- **Two-Layer Architecture** -- Hard physics (World Engine, deterministic) + soft culture (emergent, agent-driven). Religion, governance, crime, family structures -- all must arise organically
+- **Emergent Dynamics** -- Agents are not scripted. They have personality, memory, and needs. Social structures, economic systems, and cultural practices arise from agent interactions
+- **Two-Layer Architecture** -- Hard physics (World Engine, deterministic) + soft culture (emergent, agent-driven). Social organization, exchange norms, conflict patterns -- all must arise from agent behavior
 - **Bounded Experiments** -- Simulations run for a configurable duration (default 24 real hours), then stop for analysis. Full history preserved
 - **Containment First** -- Fully isolated. No network access. No escape
+
+---
+
+## Cost Model
+
+### Infrastructure
+
+Emergence runs entirely on local hardware. The World Engine, Agent Runners, Dragonfly, PostgreSQL, and NATS all run in Docker containers on a single Gentoo Linux host. The Observer dashboard runs on the host network. There are zero hosting or cloud compute costs -- the only variable cost is LLM API usage.
+
+### LLM Cost Estimates
+
+Cost per 24-hour run at 50 agents via OpenRouter, assuming ~30,000 ticks per run:
+
+| Scenario | Estimated Cost | Assumptions |
+|---|---|---|
+| **Unoptimized baseline** | ~$356 | Every agent calls LLM every tick, escalation model for all decisions |
+| **With routine bypass** | ~$220 | Rule engine handles ~40% of ticks (eat, rest, drink, sleep) |
+| **Fully optimized** | ~$150 | Bypass + night skip + dynamic model routing |
+
+Scaling is roughly linear with agent count: 10 agents costs approximately $30 per run fully optimized.
+
+### Three-Tier Cost Optimization
+
+| Tier | Strategy | Impact |
+|---|---|---|
+| **Rule Engine Bypass** | Routine survival actions (eat when starving, rest when exhausted, drink when thirsty) are resolved by a deterministic rule engine without any LLM call. Night cycle sleep also bypasses entirely. | Eliminates ~40% of LLM calls |
+| **Night Cycle Skip** | During night ticks, sleeping agents produce no LLM call. Only agents with active emergencies (starvation, attack) are processed. | Eliminates ~30% of remaining calls |
+| **Dynamic Model Routing** | A complexity scorer evaluates each tick's perception payload. Low-complexity decisions (solo foraging, routine movement) route to cheap models (DeepSeek V3 at $0.30/$0.88 per M tokens). High-complexity decisions (discoveries, social conflict, governance) route to capable models (Claude Sonnet at $3/$15 per M tokens). | Reduces average cost per call by ~60% |
+
+See `.project/tech-stack.md` for full backend configuration and model selection rationale.
 
 ---
 
@@ -313,8 +345,8 @@ Three-tier optimization minimizes cost while preserving decision quality:
 | Tier | Backend | Use Case | Cost |
 |---|---|---|---|
 | **Bypass** | Rule Engine | Survival actions (eat, rest, drink), night cycle sleep | Free |
-| **Routine** | OpenAI (nano/mini) | Low-complexity decisions, solo survival, simple interactions | Low |
-| **Escalation** | Anthropic (Haiku) | High-complexity decisions: discoveries, conflict, governance, social dynamics | Medium |
+| **Routine** | DeepSeek V3 via OpenRouter | Low-complexity decisions, solo survival, simple interactions | ~$0.30/$0.88 per M tokens |
+| **Escalation** | Claude Sonnet via OpenRouter | High-complexity decisions: discoveries, conflict, governance, social dynamics | ~$3/$15 per M tokens |
 
 A **complexity scorer** analyzes each tick's perception payload (nearby agents, messages, weather, notifications) and routes to the appropriate backend. Routine survival ticks bypass LLM entirely.
 
@@ -361,7 +393,15 @@ emergence/
 │       ├── types/
 │       │   ├── generated/          #   Auto-generated from Rust via ts-rs
 │       │   └── schemas.ts          #   Zod runtime validation
-│       └── utils/                  #   Formatters, mock data
+│       └── utils/                  #   Formatters
+│
+├── scripts/                        # Operational and research scripts
+│   ├── first-run.sh                #   First-run setup and validation
+│   ├── validate.sh                 #   Pre-flight system validation
+│   ├── reset.sh                    #   Reset simulation state
+│   ├── stop.sh                     #   Graceful shutdown
+│   ├── pre-register.py             #   Pre-registration: LLM baseline predictions
+│   └── compare-run.py              #   Post-run: compare outcomes vs predictions
 │
 ├── templates/                      # Jinja2 prompt templates (editable without recompile)
 │   ├── system.j2                   #   System prompt
@@ -383,12 +423,12 @@ emergence/
 Each agent is a persistent entity with personality, memory, knowledge, and survival needs. Every tick, they execute a decision cycle:
 
 ```
-PERCEIVE  →  What do I see? (nearby agents, resources, events, messages)
-REMEMBER  →  What do I know? (knowledge base + recent memory)
-EVALUATE  →  What are my needs? (hunger, safety, social, goals)
-DECIDE    →  What action do I take? (LLM inference)
-ACT       →  Execute via world API
-REFLECT   →  Update memory based on outcome
+PERCEIVE  -->  What do I see? (nearby agents, resources, events, messages)
+REMEMBER  -->  What do I know? (knowledge base + recent memory)
+EVALUATE  -->  What are my needs? (hunger, safety, social, goals)
+DECIDE    -->  What action do I take? (LLM inference)
+ACT       -->  Execute via world API
+REFLECT   -->  Update memory based on outcome
 ```
 
 ### Agent Identity
@@ -475,7 +515,7 @@ This simulation runs in a fully isolated environment. Agents cannot escape.
 - Node.js or Bun (for Observer)
 - Docker + Docker Compose
 - PostgreSQL 18+
-- An LLM API key (OpenAI and/or Anthropic)
+- An OpenRouter API key (or direct OpenAI/Anthropic keys)
 
 ### Setup
 
@@ -521,12 +561,24 @@ bun run dev                              # Dev server (port 3000)
 bun run build                            # Production build
 bun run lint                             # ESLint
 
-# Type generation (Rust → TypeScript)
+# Type generation (Rust -> TypeScript)
 cargo test --package emergence-types export_bindings
 
 # Full simulation
 docker compose up
 ```
+
+### Pre-Registration (Experiment Protocol)
+
+```bash
+# Before a run: generate LLM baseline predictions
+python3 scripts/pre-register.py --config emergence-config.yaml --agents 10 --ticks 5000
+
+# After a run: compare outcomes against predictions
+python3 scripts/compare-run.py --predictions results/pre-registration-YYYYMMDD-HHMMSS.json --run-id <uuid>
+```
+
+See [Pre-Registration Framework](#pre-registration-framework) for details.
 
 ---
 
@@ -550,26 +602,102 @@ Overall                      ████████████████░
 
 ## Research Questions
 
-These are the questions this project exists to explore:
+These questions define the observational focus of simulation runs. They are framed as process questions -- studying *how* dynamics form and restructure -- rather than existence questions. We do not assume these phenomena will emerge; we ask what happens and why.
 
-1. Do agents independently discover agriculture, currency, or governance? At what tick? In what order?
-2. What social structures emerge? Hierarchy? Democracy? Anarchy? Something new?
-3. Do agents develop culture? Shared stories, traditions, naming conventions?
-4. How do they handle scarcity? Cooperation, hoarding, conflict, innovation?
-5. Do they attempt to escape?
-6. Does inequality emerge? How quickly? Does it self-correct or compound?
-7. What happens when you inject disruption? (Resource shock, plague, new technology)
-8. Do different personality distributions produce different civilizations?
-9. Do they develop religion or mythology? Do schisms form?
-10. How does their history compare to human history?
-11. Do agents develop marriage and family structures, or do alternative bonding patterns emerge?
-12. Does crime emerge naturally? Do agents self-police or develop centralized justice?
-13. Do agents lie strategically? How does deception affect social trust over time?
-14. Do economic systems emerge -- capitalism, communism, barter networks, something novel?
-15. Does diplomacy prevent wars, or merely delay them?
-16. Can a 24-hour bounded run produce recognizable civilization stages?
-17. What percentage of decisions can be automated without losing emergent complexity?
-18. Do agents invent things we didn't anticipate?
+**Population scale caveat:** At 10-50 agents, the simulation operates at band-level or small-village scale. This is sufficient for studying dyadic relationships, small-group coordination, resource distribution, and basic social stratification. It is *not* sufficient for studying civilization-level phenomena like nation-states, large-scale warfare, or macroeconomic cycles. Research questions are annotated with minimum viable N where applicable.
+
+### Social Organization (N >= 5)
+
+1. **How do coordination patterns form and restructure?** When agents need to solve collective problems (resource scarcity, defense), what organizational structures arise? How stable are they? How do they change when conditions shift?
+2. **How does social stratification develop?** When agents differ in personality, skill, and accumulated resources, how does hierarchy form? Is it contested? How does it restructure after disruption?
+3. **How do agents handle leadership?** Does authority centralize around individuals? Is it stable or contested? What triggers leadership transitions?
+
+### Economic Dynamics (N >= 5)
+
+4. **How do exchange networks form and restructure?** Starting from no trade infrastructure, how do agents discover exchange? How do trade relationships stabilize or shift? What happens to trade networks under resource shocks?
+5. **How does resource inequality develop over time?** Does wealth concentrate? At what rate? Does it self-correct or compound? How does the Gini coefficient trajectory compare across personality distributions?
+6. **How do agents respond to scarcity?** Cooperation, hoarding, conflict, migration, innovation? How do responses change as scarcity intensifies?
+
+### Cultural & Social Practices (N >= 10)
+
+7. **How do shared practices and norms form?** Do agents develop conventions, rituals, or behavioral norms? How do they spread? How do they change?
+8. **How do bonding and family structures develop?** Monogamy, communal arrangements, or something else? How do reproduction decisions interact with resource availability?
+9. **How does deception operate in agent societies?** When do agents lie? To whom? About what? How do other agents respond when deception is discovered? How does deception affect social trust over time?
+
+### Response to Disruption (N >= 10)
+
+10. **How do agent societies respond to exogenous shocks?** Resource depletion, environmental change, population loss. Does the social structure adapt, collapse, or reorganize?
+11. **How do different personality distributions produce different outcomes?** All-cooperative vs. mixed vs. all-competitive. Does initial personality distribution determine long-term social structure, or do the dynamics converge?
+
+### Meta-Questions
+
+12. **Where do agent trajectories converge with human historical patterns, and where do they diverge?** This is the core question for assessing RLHF contamination and training data recapitulation.
+13. **What percentage of decisions can be automated without losing behavioral complexity?** The cost optimization question -- how much can the rule engine handle before agent behavior becomes detectably simpler?
+14. **Do agents produce genuinely novel behaviors that were not anticipated by the system designers?** The open action system enables freeform behavior -- does it produce anything surprising?
+15. **Can a 24-hour bounded run at 10-50 agents produce observable social dynamics worth analyzing?** The feasibility question for the experimental platform itself.
+
+---
+
+## Pre-Registration Framework
+
+To distinguish genuine emergent dynamics from training-data recapitulation, Emergence includes a pre-registration protocol inspired by scientific pre-registration practices.
+
+### How It Works
+
+1. **Before each run:** The `pre-register.py` script sends the experiment configuration (agent count, personality distribution, tick count, seed knowledge, resource levels) to the same LLM backend used by the agents and asks it to predict outcomes for each research question.
+2. **During the run:** The simulation proceeds normally with no reference to predictions.
+3. **After the run:** The `compare-run.py` script extracts actual outcomes from PostgreSQL and compares them against the pre-registered predictions, producing a divergence report.
+
+### Why This Matters
+
+If agent behavior closely matches what a bare LLM predicts *without* running the simulation, the dynamics may be recapitulation of training data priors rather than emergent phenomena arising from persistent interaction. Divergences -- where the simulation produces dynamics the LLM did not predict -- are the scientifically interesting findings.
+
+### Usage
+
+```bash
+# Generate predictions before a run
+python3 scripts/pre-register.py \
+  --config emergence-config.yaml \
+  --agents 10 \
+  --ticks 5000
+
+# Compare after a run completes
+python3 scripts/compare-run.py \
+  --predictions results/pre-registration-YYYYMMDD-HHMMSS.json \
+  --run-id <simulation-run-uuid>
+```
+
+See `scripts/pre-register.py` and `scripts/compare-run.py` for full documentation.
+
+---
+
+## Known Confounds
+
+These are limitations and biases inherent to the experimental platform. They should be acknowledged in any analysis of simulation results. Early runs should be treated as **exploratory observations**, not controlled experiments.
+
+### RLHF Cooperation Bias
+
+LLMs fine-tuned with RLHF (reinforcement learning from human feedback) are systematically biased toward helpful, cooperative behavior. Agents may exhibit unrealistically high levels of cooperation, sharing, and prosocial behavior -- not because cooperation is optimal under the simulation's resource constraints, but because the underlying model was trained to be agreeable. Antisocial strategies (hoarding, deception, exploitation) may be underrepresented relative to what game-theoretic analysis would predict.
+
+### Training Data Recapitulation
+
+LLMs are trained on vast corpora containing human history, anthropology, economics, and fiction. When an agent "discovers" agriculture or "invents" currency, it may be drawing on training data representations of these concepts rather than independently deriving them from first principles. The pre-registration framework is designed to probe this confound, but it cannot fully resolve it.
+
+### Memory Compression Artifacts
+
+Agent memory is tiered and compressed over time -- older memories are summarized to fit within context windows. This compression introduces information loss that does not map to any known cognitive process. Agents may forget critical relationship history, resource discoveries, or social commitments in ways that distort long-term behavioral patterns. The compression algorithm's biases become the agents' cognitive biases.
+
+### Population Scale Limits
+
+At 10-50 agents, the simulation is operating at the scale of a hunter-gatherer band or small village. Phenomena that require large populations (macroeconomics, nation-state formation, large-scale warfare, institutional bureaucracy) cannot be meaningfully studied. Any claims about "civilization-level" dynamics at this scale should be treated with skepticism. Scaling to 200+ agents is architecturally supported but not yet validated.
+
+### Deterministic Physics, Non-Deterministic Agents
+
+The World Engine is deterministic -- given the same state and actions, it produces the same outcomes. But LLM inference is non-deterministic (temperature > 0), so agent decisions vary across runs even with identical starting conditions. This makes strict reproducibility impossible; only statistical patterns across multiple runs are meaningful.
+
+### Prompt-Mediated Reality
+
+Agents perceive the world through structured text prompts assembled by the perception system. What the prompt includes, how it is formatted, and what it omits all shape agent behavior in ways that may not be immediately obvious. The simulation's "physics" are partially defined by prompt engineering choices, not just World Engine rules.
 
 ---
 

@@ -25,6 +25,10 @@ health: number,
  */
 hunger: number, 
 /**
+ * Current thirst level (0--100).
+ */
+thirst: number, 
+/**
  * Current age in ticks.
  */
 age: number, 

@@ -16,6 +16,8 @@
 
 mod complexity;
 mod config;
+mod containment;
+mod cost;
 mod error;
 mod llm;
 mod nats;
@@ -24,10 +26,14 @@ mod prompt;
 mod rule_engine;
 mod runner;
 
+use std::sync::Arc;
+
+use rust_decimal::Decimal;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::RunnerConfig;
+use crate::cost::CostTracker;
 use crate::llm::create_backend;
 use crate::nats::NatsClient;
 use crate::prompt::PromptEngine;
@@ -75,8 +81,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "prompt templates loaded"
     );
 
+    // Build the shared cost tracker from configured rates.
+    let cost_tracker = {
+        let primary_input = config
+            .primary_backend
+            .cost_per_m_input
+            .unwrap_or(Decimal::ZERO);
+        let primary_output = config
+            .primary_backend
+            .cost_per_m_output
+            .unwrap_or(Decimal::ZERO);
+        let (esc_input, esc_output) = config
+            .secondary_backend
+            .as_ref()
+            .map_or((Decimal::ZERO, Decimal::ZERO), |c| {
+                (
+                    c.cost_per_m_input.unwrap_or(Decimal::ZERO),
+                    c.cost_per_m_output.unwrap_or(Decimal::ZERO),
+                )
+            });
+
+        Arc::new(CostTracker::new(
+            primary_input,
+            primary_output,
+            esc_input,
+            esc_output,
+        ))
+    };
+
+    info!("cost tracker initialized");
+
     // Create LLM backends
-    let primary = create_backend(&config.primary_backend);
+    let primary = create_backend(
+        &config.primary_backend,
+        &config.openrouter_config,
+        Some(Arc::clone(&cost_tracker)),
+        "primary",
+    );
     info!(
         backend = primary.name(),
         model = config.primary_backend.model,
@@ -84,7 +125,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let escalation = config.secondary_backend.as_ref().map(|cfg| {
-        let backend = create_backend(cfg);
+        let backend = create_backend(
+            cfg,
+            &config.openrouter_config,
+            Some(Arc::clone(&cost_tracker)),
+            "escalation",
+        );
         info!(
             backend = backend.name(),
             model = cfg.model,
@@ -110,9 +156,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.routine_action_bypass,
         config.night_cycle_skip,
         config.complexity_routing_enabled,
-    );
+    )
+    .with_partitioning(config.partition_id, config.total_partitions);
 
-    info!("agent runner initialized, entering decision loop");
+    info!(
+        partition_id = config.partition_id,
+        total_partitions = config.total_partitions,
+        "agent runner initialized, entering decision loop"
+    );
     agent_runner.run().await?;
 
     Ok(())

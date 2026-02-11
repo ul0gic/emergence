@@ -10,13 +10,19 @@
 /// All rates are expressed as whole `u32` values applied once per tick.
 /// The World Engine constructs this from `emergence-config.yaml` at
 /// simulation start and passes it into vital update functions.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VitalsConfig {
     /// Hunger points added per tick (default: 5).
     pub hunger_rate: u32,
 
+    /// Thirst points added per tick (default: 3).
+    pub thirst_per_tick: u32,
+
     /// Health damage per tick when hunger >= 100 (default: 10).
     pub starvation_damage: u32,
+
+    /// Health damage per tick when thirst >= 100 (default: 15).
+    pub dehydration_health_loss: u32,
 
     /// Energy recovered when resting without shelter (default: 30).
     pub rest_recovery: u32,
@@ -41,6 +47,9 @@ pub struct VitalsConfig {
     /// Hunger threshold above which starvation damage applies (default: 100).
     pub starvation_threshold: u32,
 
+    /// Thirst threshold above which dehydration damage applies (default: 100).
+    pub dehydration_threshold: u32,
+
     /// Hunger threshold below which health can regenerate (default: 50).
     pub heal_hunger_threshold: u32,
 
@@ -58,7 +67,9 @@ impl Default for VitalsConfig {
     fn default() -> Self {
         Self {
             hunger_rate: 5,
+            thirst_per_tick: 3,
             starvation_damage: 10,
+            dehydration_health_loss: 15,
             rest_recovery: 30,
             natural_heal_rate: 2,
             lifespan: 2500,
@@ -66,6 +77,7 @@ impl Default for VitalsConfig {
             starting_energy: 80,
             starting_health: 100,
             starvation_threshold: 100,
+            dehydration_threshold: 100,
             heal_hunger_threshold: 50,
             heal_energy_threshold: 50,
             aging_threshold_pct: 80,
@@ -124,13 +136,17 @@ mod tests {
     fn default_config_values() {
         let cfg = VitalsConfig::default();
         assert_eq!(cfg.hunger_rate, 5);
+        assert_eq!(cfg.thirst_per_tick, 3);
         assert_eq!(cfg.starvation_damage, 10);
+        assert_eq!(cfg.dehydration_health_loss, 15);
         assert_eq!(cfg.rest_recovery, 30);
         assert_eq!(cfg.natural_heal_rate, 2);
         assert_eq!(cfg.lifespan, 2500);
         assert_eq!(cfg.carry_capacity, 50);
         assert_eq!(cfg.starting_energy, 80);
         assert_eq!(cfg.starting_health, 100);
+        assert_eq!(cfg.starvation_threshold, 100);
+        assert_eq!(cfg.dehydration_threshold, 100);
     }
 
     #[test]

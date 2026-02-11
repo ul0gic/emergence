@@ -40,7 +40,7 @@ pub enum ClockError {
 /// The clock advances once per tick. Season and time-of-day are derived
 /// from the tick counter and the [`TimeConfig`]. The era is set externally
 /// when the engine detects emergent era transitions.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorldClock {
     /// Current tick number (0-indexed, incremented at the start of each tick).
     tick: u64,

@@ -1,0 +1,25 @@
+# Build artifacts
+target/
+
+# Version control
+.git/
+
+# Project documentation (not needed in image)
+.project/
+
+# Observer frontend (runs outside Docker)
+observer/node_modules/
+observer/dist/
+
+# Markdown documentation
+*.md
+
+# Environment files (injected via docker-compose env_file)
+.env
+.env.*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo

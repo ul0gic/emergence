@@ -26,15 +26,20 @@
 //!
 //! [`SimulationSnapshot`]: state::SimulationSnapshot
 
+pub mod alerts;
+pub mod anomaly;
 pub mod error;
 pub mod handlers;
 pub mod operator;
 pub mod router;
 pub mod server;
+pub mod social;
+pub mod startup;
 pub mod state;
 pub mod ws;
 
 // Re-export primary types for convenience.
 pub use router::build_router;
 pub use server::{start_server, ServerConfig, ServerError};
+pub use startup::{spawn_observer, StartupError};
 pub use state::{AppState, SimulationSnapshot, TickBroadcast};

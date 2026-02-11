@@ -1,5 +1,5 @@
 /**
- * World Map Visualization (Task 4.5.9)
+ * World Map Visualization (Task 4.5.9 + Phase 9.5 Enhancements)
  *
  * Clean schematic continent map rendered as layered SVG with fixed-coordinate
  * location nodes connected by curved route paths. Strategy-minimap style --
@@ -11,26 +11,54 @@
  *   3. Continent landmass with region tints
  *   4. River
  *   5. Region border lines and labels
- *   6. Route paths (quadratic Bezier curves)
- *   7. Location nodes with agent indicators
+ *   6. Agent movement trails (Phase 9.5.3)
+ *   7. Route paths (quadratic Bezier curves, color-coded by type)
+ *   8. Location nodes with agent indicators
+ *   9. Agent name labels (Phase 9.5.5, togglable)
+ *
+ * Overlays (HTML positioned over SVG):
+ *   - Location detail popup (Phase 9.5.2)
+ *   - Resource heatmap legend (Phase 9.5.4)
+ *   - Toggle controls toolbar
  */
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as d3 from "d3";
 
-import type { AgentListItem, LocationListItem } from "../types/generated/index.ts";
-import { MOCK_AGENTS, MOCK_LOCATIONS, MOCK_ROUTES, type MockRoute } from "../utils/mockData.ts";
+import type {
+  AgentListItem,
+  Event,
+  LocationDetailResponse,
+  LocationListItem,
+  Route,
+} from "../types/generated/index.ts";
+import { cn } from "../lib/utils.ts";
 
 // ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
 
+/** Mapped route for display -- uses API Route type directly now. */
+interface MappedRoute {
+  from: string;
+  to: string;
+  cost: number;
+  pathType: string;
+  durability: number;
+  maxDurability: number;
+}
+
 interface WorldMapProps {
   locations: LocationListItem[];
   agents: AgentListItem[];
-  routes: MockRoute[];
+  routes: Route[];
+  events: Event[];
+  currentTick: number;
+  selectedLocationId: string | null;
+  locationDetail: LocationDetailResponse | null;
+  agentNames: Map<string, string>;
   onSelectLocation: (id: string) => void;
-  useMock?: boolean;
+  onSelectAgent: (id: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +74,21 @@ const REGION_COLORS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 // Route style helpers
 // ---------------------------------------------------------------------------
+
+function getPathColor(pathType: string): string {
+  switch (pathType) {
+    case "Highway":
+      return "#8b949e";
+    case "Road":
+      return "#6e7681";
+    case "WornPath":
+      return "#5a4a3a";
+    case "DirtTrail":
+      return "#6b5b45";
+    default:
+      return "#3a4858";
+  }
+}
 
 function getPathWidth(pathType: string): number {
   switch (pathType) {
@@ -74,6 +117,76 @@ function getPathDash(pathType: string): string {
     default:
       return "2,4";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Agent color assignment (stable per-agent hash)
+// ---------------------------------------------------------------------------
+
+const AGENT_PALETTE = [
+  "#58a6ff", "#3fb950", "#f0c040", "#bc8cff", "#ff7b72",
+  "#79c0ff", "#db6d28", "#f778ba", "#a5d6a7", "#d29922",
+  "#b0bec5", "#c9733a",
+];
+
+function agentColor(agentId: string): string {
+  let hash = 0;
+  for (let i = 0; i < agentId.length; i++) {
+    hash = ((hash << 5) - hash + agentId.charCodeAt(i)) | 0;
+  }
+  return AGENT_PALETTE[Math.abs(hash) % AGENT_PALETTE.length] ?? "#8b949e";
+}
+
+// ---------------------------------------------------------------------------
+// Heatmap resource color mapping
+// ---------------------------------------------------------------------------
+
+interface ResourceHeatmapData {
+  dominantColor: string;
+  intensity: number;
+  label: string;
+}
+
+function computeHeatmapForLocation(
+  detail: LocationDetailResponse | null,
+  locationId: string,
+  _locations: LocationListItem[],
+): ResourceHeatmapData | null {
+  // If we have the full location detail, compute from it
+  if (detail && detail.location.id === locationId) {
+    const resources = detail.location.base_resources;
+    let maxAvail = 0;
+    let dominantResource = "";
+    let totalMax = 0;
+    let totalAvail = 0;
+
+    for (const [resName, node] of Object.entries(resources)) {
+      if (!node) continue;
+      totalAvail += node.available;
+      totalMax += node.max_capacity;
+      if (node.available > maxAvail) {
+        maxAvail = node.available;
+        dominantResource = resName;
+      }
+    }
+
+    if (totalMax === 0) return { dominantColor: "#484f58", intensity: 0, label: "Empty" };
+
+    const intensity = totalMax > 0 ? totalAvail / totalMax : 0;
+    const color = getResourceHeatColor(dominantResource);
+    return { dominantColor: color, intensity, label: dominantResource };
+  }
+  return null;
+}
+
+function getResourceHeatColor(resource: string): string {
+  if (resource.startsWith("Food")) return "#3fb950"; // green
+  if (resource === "Water") return "#58a6ff"; // blue
+  if (resource === "Wood" || resource === "Stone" || resource === "Ore" || resource === "Metal")
+    return "#8b6914"; // brown
+  if (resource === "Fiber" || resource === "Clay" || resource === "Hide")
+    return "#8b6914"; // brown
+  return "#484f58"; // gray
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +332,51 @@ function routeMidpoint(from: Coord, to: Coord): Coord {
 }
 
 // ---------------------------------------------------------------------------
+// Movement trail extraction from events
+// ---------------------------------------------------------------------------
+
+interface MovementTrail {
+  agentId: string;
+  fromLocationId: string;
+  toLocationId: string;
+  tick: number;
+}
+
+function extractMovementTrails(
+  events: Event[],
+  currentTick: number,
+  trailWindow: number,
+): MovementTrail[] {
+  const trails: MovementTrail[] = [];
+  const minTick = currentTick - trailWindow;
+
+  for (const event of events) {
+    if (event.tick < minTick) continue;
+    if (event.event_type !== "ActionSucceeded") continue;
+    if (!event.agent_id || !event.details) continue;
+
+    const details = event.details as Record<string, unknown>;
+    if (typeof details.action_type !== "string") continue;
+    // The action_type in observer events is formatted as e.g. "Move"
+    if (!details.action_type.includes("Move")) continue;
+
+    // For Move actions, the agent moved from the event's location_id
+    // to their current location. We track the from-location from the
+    // agent_state_snapshot.
+    if (event.agent_state_snapshot && event.location_id) {
+      trails.push({
+        agentId: event.agent_id,
+        fromLocationId: event.location_id,
+        toLocationId: event.agent_state_snapshot.location_id,
+        tick: event.tick,
+      });
+    }
+  }
+
+  return trails;
+}
+
+// ---------------------------------------------------------------------------
 // Location node renderer (extracted to reduce cognitive complexity)
 // ---------------------------------------------------------------------------
 
@@ -230,6 +388,8 @@ interface PositionedLocation extends LocationListItem {
 function drawLocationNode(
   layer: d3.Selection<SVGGElement, unknown, null, undefined>,
   loc: PositionedLocation,
+  isSelected: boolean,
+  heatmapMode: boolean,
   onSelect: (id: string) => void,
 ): void {
   const nodeG = layer
@@ -243,8 +403,22 @@ function drawLocationNode(
   const hasAgents = loc.agentCount > 0;
   const circleR = 12 + loc.agentCount * 2;
 
+  // Selection ring
+  if (isSelected) {
+    nodeG
+      .append("circle")
+      .attr("cx", loc.coord.x)
+      .attr("cy", loc.coord.y)
+      .attr("r", circleR + 10)
+      .attr("fill", "none")
+      .attr("stroke", "#f0c040")
+      .attr("stroke-width", 2)
+      .attr("stroke-dasharray", "4,3")
+      .attr("opacity", 0.9);
+  }
+
   // Glow for locations with agents
-  if (hasAgents) {
+  if (hasAgents && !heatmapMode) {
     nodeG
       .append("circle")
       .attr("cx", loc.coord.x)
@@ -256,21 +430,22 @@ function drawLocationNode(
   }
 
   // Location circle
+  const fillColor = heatmapMode ? regionColor : regionColor;
   nodeG
     .append("circle")
     .attr("cx", loc.coord.x)
     .attr("cy", loc.coord.y)
     .attr("r", circleR)
-    .attr("fill", regionColor)
-    .attr("fill-opacity", 0.2)
+    .attr("fill", fillColor)
+    .attr("fill-opacity", heatmapMode ? 0.4 : 0.2)
     .attr("stroke", regionColor)
-    .attr("stroke-width", 1.5);
+    .attr("stroke-width", isSelected ? 2.5 : 1.5);
 
   // Name label
   nodeG
     .append("text")
     .attr("x", loc.coord.x)
-    .attr("y", loc.coord.y - 20)
+    .attr("y", loc.coord.y - circleR - 6)
     .attr("text-anchor", "middle")
     .attr("fill", "#c9d1d9")
     .attr("font-size", "11px")
@@ -282,8 +457,8 @@ function drawLocationNode(
   if (hasAgents) {
     nodeG
       .append("circle")
-      .attr("cx", loc.coord.x + 14)
-      .attr("cy", loc.coord.y - 10)
+      .attr("cx", loc.coord.x + circleR)
+      .attr("cy", loc.coord.y - circleR + 4)
       .attr("r", 7)
       .attr("fill", "#f0c040")
       .attr("stroke", "#0d1117")
@@ -291,8 +466,8 @@ function drawLocationNode(
 
     nodeG
       .append("text")
-      .attr("x", loc.coord.x + 14)
-      .attr("y", loc.coord.y - 7)
+      .attr("x", loc.coord.x + circleR)
+      .attr("y", loc.coord.y - circleR + 7)
       .attr("text-anchor", "middle")
       .attr("fill", "#0d1117")
       .attr("font-size", "9px")
@@ -316,23 +491,242 @@ function drawLocationNode(
 }
 
 // ---------------------------------------------------------------------------
+// Agent label renderer (Phase 9.5.5)
+// ---------------------------------------------------------------------------
+
+function drawAgentLabels(
+  layer: d3.Selection<SVGGElement, unknown, null, undefined>,
+  agents: AgentListItem[],
+  coordLookup: Map<string, Coord>,
+  agentCounts: Record<string, number>,
+): void {
+  // Group alive agents by location
+  const agentsByLocation = new Map<string, AgentListItem[]>();
+  for (const agent of agents) {
+    if (!agent.alive || !agent.location_id) continue;
+    const list = agentsByLocation.get(agent.location_id) ?? [];
+    list.push(agent);
+    agentsByLocation.set(agent.location_id, list);
+  }
+
+  for (const [locationId, locAgents] of agentsByLocation) {
+    const coord = coordLookup.get(locationId);
+    if (!coord) continue;
+
+    const count = agentCounts[locationId] ?? 0;
+    const circleR = 12 + count * 2;
+
+    for (let i = 0; i < locAgents.length; i++) {
+      const agent = locAgents[i];
+      if (!agent) continue;
+      const color = agentColor(agent.id);
+      const yOffset = circleR + 14 + i * 12;
+
+      layer
+        .append("text")
+        .attr("x", coord.x)
+        .attr("y", coord.y + yOffset)
+        .attr("text-anchor", "middle")
+        .attr("fill", color)
+        .attr("font-size", "9px")
+        .attr("font-family", "var(--font-mono)")
+        .attr("font-weight", "400")
+        .attr("opacity", 0.85)
+        .text(agent.name);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Location Detail Popup Component (Phase 9.5.2)
+// ---------------------------------------------------------------------------
+
+function LocationDetailPopup({
+  locationDetail,
+  coord,
+  containerRect,
+  onClose,
+  onSelectAgent,
+}: {
+  locationDetail: LocationDetailResponse;
+  coord: Coord;
+  containerRect: DOMRect;
+  onClose: () => void;
+  onSelectAgent: (id: string) => void;
+}) {
+  // Convert SVG coords to screen position
+  // The SVG viewBox is 1400x600, mapped to the container rect
+  const scaleX = containerRect.width / 1400;
+  const scaleY = containerRect.height / 600;
+  const screenX = coord.x * scaleX;
+  const screenY = coord.y * scaleY;
+
+  // Position popup to the right of the node, or left if too close to right edge
+  const popupWidth = 280;
+  const flipX = screenX + popupWidth + 30 > containerRect.width;
+  const left = flipX ? screenX - popupWidth - 20 : screenX + 30;
+  const top = Math.max(8, Math.min(screenY - 40, containerRect.height - 300));
+
+  const loc = locationDetail.location;
+  const agentsHere = locationDetail.agents_here;
+  const resources = Object.entries(loc.base_resources).filter(
+    (entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] != null,
+  );
+
+  return (
+    <div
+      className="absolute z-50 bg-bg-elevated border border-border-primary rounded-md shadow-lg font-mono text-xs overflow-hidden"
+      style={{ left: `${left}px`, top: `${top}px`, width: `${popupWidth}px` }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-sm py-xs bg-bg-tertiary border-b border-border-primary">
+        <span className="text-text-primary font-semibold text-sm truncate">{loc.name}</span>
+        <button
+          className="text-text-muted hover:text-text-primary text-base leading-none bg-transparent border-0 cursor-pointer px-xs"
+          onClick={onClose}
+        >
+          x
+        </button>
+      </div>
+
+      <div className="p-sm space-y-2 max-h-64 overflow-y-auto">
+        {/* Region and description */}
+        <div>
+          <span className="text-text-secondary">{loc.region}</span>
+          <span className="text-text-muted mx-1">/</span>
+          <span className="text-text-secondary">{loc.location_type}</span>
+        </div>
+        <p className="text-text-muted text-2xs leading-tight">{loc.description}</p>
+
+        {/* Capacity bar */}
+        <div>
+          <div className="flex justify-between text-text-secondary mb-0.5">
+            <span>Capacity</span>
+            <span>
+              {agentsHere.length} / {loc.capacity}
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-bg-primary rounded-sm overflow-hidden">
+            <div
+              className="h-full rounded-sm bg-info"
+              style={{ width: `${Math.min(100, (agentsHere.length / Math.max(1, loc.capacity)) * 100)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Resources */}
+        {resources.length > 0 && (
+          <div>
+            <div className="text-text-secondary font-semibold mb-1">Resources</div>
+            <div className="space-y-1">
+              {resources.map(([resName, node]) => {
+                const pct =
+                  node.max_capacity > 0 ? (node.available / node.max_capacity) * 100 : 0;
+                return (
+                  <div key={resName}>
+                    <div className="flex justify-between text-text-muted text-2xs">
+                      <span>{resName.replace(/([A-Z])/g, " $1").trim()}</span>
+                      <span>
+                        {node.available}/{node.max_capacity}
+                      </span>
+                    </div>
+                    <div className="w-full h-1 bg-bg-primary rounded-sm overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-sm",
+                          pct > 50 ? "bg-success" : pct > 20 ? "bg-warning" : "bg-danger",
+                        )}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Occupants */}
+        {agentsHere.length > 0 && (
+          <div>
+            <div className="text-text-secondary font-semibold mb-1">Occupants</div>
+            <div className="flex flex-wrap gap-1">
+              {agentsHere.map((a) => (
+                <button
+                  key={a.id}
+                  className="px-1.5 py-0.5 rounded-sm bg-bg-primary text-text-accent border border-border-secondary hover:bg-bg-tertiary cursor-pointer text-2xs font-mono"
+                  onClick={() => onSelectAgent(a.id)}
+                >
+                  {a.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {agentsHere.length === 0 && (
+          <div className="text-text-muted text-2xs italic">No occupants</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Heatmap legend component
+// ---------------------------------------------------------------------------
+
+function HeatmapLegend() {
+  return (
+    <div className="absolute top-2 right-2 bg-bg-elevated/90 border border-border-primary rounded-md px-sm py-xs font-mono text-2xs">
+      <div className="text-text-secondary font-semibold mb-1">Resource Heatmap</div>
+      <div className="space-y-0.5">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#3fb950" }} />
+          <span className="text-text-muted">Food-rich</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#58a6ff" }} />
+          <span className="text-text-muted">Water-rich</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#8b6914" }} />
+          <span className="text-text-muted">Material-rich</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#484f58" }} />
+          <span className="text-text-muted">Depleted</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function WorldMap({
-  locations: propLocations,
-  agents: propAgents,
-  routes: propRoutes,
+  locations,
+  agents,
+  routes,
+  events,
+  currentTick,
+  selectedLocationId,
+  locationDetail,
+  agentNames: _agentNames,
   onSelectLocation,
-  useMock = false,
+  onSelectAgent,
 }: WorldMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const locations = useMock ? MOCK_LOCATIONS : propLocations;
-  const agents = useMock ? MOCK_AGENTS : propAgents;
-  const routes = useMock ? MOCK_ROUTES : propRoutes;
+  // Toggle states for overlays
+  const [showLabels, setShowLabels] = useState(false);
+  const [showTrails, setShowTrails] = useState(true);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [hoveredRoute, setHoveredRoute] = useState<string | null>(null);
 
+  // Agent count per location
   const agentCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const agent of agents) {
@@ -343,6 +737,7 @@ export default function WorldMap({
     return counts;
   }, [agents]);
 
+  // Positioned locations with coordinates
   const positionedLocations = useMemo(() => {
     return locations.map((loc, idx) => ({
       ...loc,
@@ -351,6 +746,7 @@ export default function WorldMap({
     }));
   }, [locations, agentCounts]);
 
+  // Coordinate lookup map
   const coordLookup = useMemo(() => {
     const map = new Map<string, Coord>();
     for (const loc of positionedLocations) {
@@ -359,9 +755,58 @@ export default function WorldMap({
     return map;
   }, [positionedLocations]);
 
+  // Map API routes to display routes
+  const mappedRoutes = useMemo((): MappedRoute[] => {
+    return routes.map((r) => ({
+      from: r.from_location,
+      to: r.to_location,
+      cost: r.cost_ticks,
+      pathType: r.path_type,
+      durability: r.durability,
+      maxDurability: r.max_durability,
+    }));
+  }, [routes]);
+
   const validRoutes = useMemo(() => {
-    return routes.filter((r) => coordLookup.has(r.from) && coordLookup.has(r.to));
-  }, [routes, coordLookup]);
+    return mappedRoutes.filter((r) => coordLookup.has(r.from) && coordLookup.has(r.to));
+  }, [mappedRoutes, coordLookup]);
+
+  // Movement trails from events (Phase 9.5.3)
+  const movementTrails = useMemo(() => {
+    if (!showTrails) return [];
+    return extractMovementTrails(events, currentTick, 10);
+  }, [events, currentTick, showTrails]);
+
+  // Heatmap data per location
+  const heatmapData = useMemo(() => {
+    if (!showHeatmap) return new Map<string, ResourceHeatmapData>();
+    const map = new Map<string, ResourceHeatmapData>();
+    for (const loc of positionedLocations) {
+      const data = computeHeatmapForLocation(locationDetail, loc.id, locations);
+      if (data) {
+        map.set(loc.id, data);
+      }
+    }
+    return map;
+  }, [showHeatmap, positionedLocations, locationDetail, locations]);
+
+  // Popup coordinate for selected location
+  const selectedLocationCoord = useMemo(() => {
+    if (!selectedLocationId) return null;
+    return coordLookup.get(selectedLocationId) ?? null;
+  }, [selectedLocationId, coordLookup]);
+
+  // Container rect for popup positioning
+  const [containerRect, setContainerRect] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const updateRect = () => setContainerRect(container.getBoundingClientRect());
+    updateRect();
+    const observer = new ResizeObserver(updateRect);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   // -------------------------------------------------------------------------
   // Render
@@ -432,6 +877,23 @@ export default function WorldMap({
       .attr("height", "200%")
       .append("feGaussianBlur")
       .attr("stdDeviation", "3");
+
+    // Heatmap glow (larger, colored)
+    const heatGlow = defs
+      .append("filter")
+      .attr("id", "heat-glow")
+      .attr("filterUnits", "userSpaceOnUse")
+      .attr("x", "-100%")
+      .attr("y", "-100%")
+      .attr("width", "300%")
+      .attr("height", "300%");
+    heatGlow.append("feGaussianBlur").attr("stdDeviation", "12").attr("result", "blur");
+    heatGlow
+      .append("feMerge")
+      .selectAll("feMergeNode")
+      .data(["blur", "SourceGraphic"])
+      .join("feMergeNode")
+      .attr("in", (d) => d);
 
     // Continent clip path
     defs.append("clipPath").attr("id", "continent-clip").append("path").attr("d", CONTINENT_PATH);
@@ -531,7 +993,52 @@ export default function WorldMap({
         .text(label.name);
     }
 
-    // Layer 6: Routes (quadratic Bezier curves)
+    // Layer 6: Agent movement trails (Phase 9.5.3)
+    if (movementTrails.length > 0) {
+      const trailLayer = g.append("g");
+
+      for (const trail of movementTrails) {
+        const fromCoord = coordLookup.get(trail.fromLocationId);
+        const toCoord = coordLookup.get(trail.toLocationId);
+        if (!fromCoord || !toCoord) continue;
+        if (fromCoord.x === toCoord.x && fromCoord.y === toCoord.y) continue;
+
+        const age = currentTick - trail.tick;
+        const opacity = Math.max(0.1, 1 - age / 10);
+        const color = agentColor(trail.agentId);
+
+        trailLayer
+          .append("path")
+          .attr("d", routeBezier(fromCoord, toCoord))
+          .attr("fill", "none")
+          .attr("stroke", color)
+          .attr("stroke-width", 1.5)
+          .attr("stroke-dasharray", "3,4")
+          .attr("opacity", opacity * 0.6)
+          .attr("stroke-linecap", "round");
+      }
+    }
+
+    // Layer 7: Resource heatmap underlays (Phase 9.5.4)
+    if (showHeatmap) {
+      const heatLayer = g.append("g");
+
+      for (const loc of positionedLocations) {
+        const data = heatmapData.get(loc.id);
+        if (!data) continue;
+
+        heatLayer
+          .append("circle")
+          .attr("cx", loc.coord.x)
+          .attr("cy", loc.coord.y)
+          .attr("r", 35 + data.intensity * 20)
+          .attr("fill", data.dominantColor)
+          .attr("fill-opacity", 0.12 + data.intensity * 0.15)
+          .attr("filter", "url(#heat-glow)");
+      }
+    }
+
+    // Layer 8: Routes (quadratic Bezier curves, color-coded)
     const routeLayer = g.append("g");
 
     for (const route of validRoutes) {
@@ -539,34 +1046,102 @@ export default function WorldMap({
       const toCoord = coordLookup.get(route.to);
       if (!fromCoord || !toCoord) continue;
 
+      const routeKey = `${route.from}-${route.to}`;
+      const isHovered = hoveredRoute === routeKey;
+      const durabilityRatio =
+        route.maxDurability > 0 ? route.durability / route.maxDurability : 1;
+
+      // Route path
       routeLayer
         .append("path")
         .attr("d", routeBezier(fromCoord, toCoord))
         .attr("fill", "none")
-        .attr("stroke", "#3a4858")
-        .attr("stroke-width", getPathWidth(route.pathType))
+        .attr("stroke", isHovered ? "#c9d1d9" : getPathColor(route.pathType))
+        .attr("stroke-width", isHovered ? getPathWidth(route.pathType) + 1 : getPathWidth(route.pathType))
         .attr("stroke-dasharray", getPathDash(route.pathType))
-        .attr("opacity", 0.8);
+        .attr("opacity", 0.4 + durabilityRatio * 0.5);
 
-      const mid = routeMidpoint(fromCoord, toCoord);
+      // Invisible wider hit target for hover
       routeLayer
-        .append("text")
-        .attr("x", mid.x)
-        .attr("y", mid.y)
-        .attr("text-anchor", "middle")
-        .attr("fill", "#4a5568")
-        .attr("font-size", "9px")
-        .attr("font-family", "var(--font-mono)")
-        .text(`${route.cost}t`);
+        .append("path")
+        .attr("d", routeBezier(fromCoord, toCoord))
+        .attr("fill", "none")
+        .attr("stroke", "transparent")
+        .attr("stroke-width", 12)
+        .attr("cursor", "pointer")
+        .on("mouseenter", () => setHoveredRoute(routeKey))
+        .on("mouseleave", () => setHoveredRoute(null));
+
+      // Cost label (show on hover or always for compact routes)
+      const mid = routeMidpoint(fromCoord, toCoord);
+      if (isHovered) {
+        // Background pill for hovered route label
+        routeLayer
+          .append("rect")
+          .attr("x", mid.x - 30)
+          .attr("y", mid.y - 11)
+          .attr("width", 60)
+          .attr("height", 16)
+          .attr("rx", 3)
+          .attr("fill", "#21262d")
+          .attr("stroke", "#30363d")
+          .attr("stroke-width", 0.5);
+
+        routeLayer
+          .append("text")
+          .attr("x", mid.x)
+          .attr("y", mid.y + 1)
+          .attr("text-anchor", "middle")
+          .attr("fill", "#c9d1d9")
+          .attr("font-size", "9px")
+          .attr("font-family", "var(--font-mono)")
+          .text(`${route.cost}t  ${route.pathType}`);
+      } else {
+        routeLayer
+          .append("text")
+          .attr("x", mid.x)
+          .attr("y", mid.y)
+          .attr("text-anchor", "middle")
+          .attr("fill", "#4a5568")
+          .attr("font-size", "8px")
+          .attr("font-family", "var(--font-mono)")
+          .text(`${route.cost}t`);
+      }
     }
 
-    // Layer 7: Location nodes
+    // Layer 9: Location nodes
     const nodeLayer = g.append("g");
 
     for (const loc of positionedLocations) {
-      drawLocationNode(nodeLayer, loc, onSelectLocation);
+      drawLocationNode(
+        nodeLayer,
+        loc,
+        loc.id === selectedLocationId,
+        showHeatmap,
+        onSelectLocation,
+      );
     }
-  }, [positionedLocations, validRoutes, coordLookup, onSelectLocation]);
+
+    // Layer 10: Agent name labels (Phase 9.5.5)
+    if (showLabels) {
+      const labelLayer = g.append("g");
+      drawAgentLabels(labelLayer, agents, coordLookup, agentCounts);
+    }
+  }, [
+    positionedLocations,
+    validRoutes,
+    coordLookup,
+    movementTrails,
+    currentTick,
+    showHeatmap,
+    heatmapData,
+    showLabels,
+    agents,
+    agentCounts,
+    hoveredRoute,
+    selectedLocationId,
+    onSelectLocation,
+  ]);
 
   // -------------------------------------------------------------------------
   // Effects
@@ -576,31 +1151,84 @@ export default function WorldMap({
     renderMap();
   }, [renderMap]);
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const observer = new ResizeObserver(() => {
-      renderMap();
-    });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [renderMap]);
-
   // -------------------------------------------------------------------------
   // JSX
   // -------------------------------------------------------------------------
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-bg-secondary border border-border-primary rounded-md overflow-hidden">
+      {/* Header with toggle controls */}
       <div className="flex items-center justify-between px-md py-sm bg-bg-tertiary border-b border-border-primary text-xs font-semibold text-text-secondary font-mono uppercase tracking-wide">
         <span>World Map</span>
-        <span className="text-xs font-normal">
-          {locations.length} locations / {agents.filter((a) => a.alive).length} agents
-        </span>
+        <div className="flex items-center gap-md">
+          {/* Toggle buttons */}
+          <div className="flex items-center gap-xs">
+            <button
+              className={cn(
+                "px-1.5 py-0.5 rounded-sm text-2xs font-mono border cursor-pointer transition-colors duration-100",
+                showTrails
+                  ? "bg-info/15 text-info border-info/30"
+                  : "bg-transparent text-text-muted border-border-secondary hover:text-text-secondary",
+              )}
+              onClick={() => setShowTrails((v) => !v)}
+              title="Toggle movement trails"
+            >
+              Trails
+            </button>
+            <button
+              className={cn(
+                "px-1.5 py-0.5 rounded-sm text-2xs font-mono border cursor-pointer transition-colors duration-100",
+                showLabels
+                  ? "bg-info/15 text-info border-info/30"
+                  : "bg-transparent text-text-muted border-border-secondary hover:text-text-secondary",
+              )}
+              onClick={() => setShowLabels((v) => !v)}
+              title="Toggle agent name labels"
+            >
+              Names
+            </button>
+            <button
+              className={cn(
+                "px-1.5 py-0.5 rounded-sm text-2xs font-mono border cursor-pointer transition-colors duration-100",
+                showHeatmap
+                  ? "bg-warning/15 text-warning border-warning/30"
+                  : "bg-transparent text-text-muted border-border-secondary hover:text-text-secondary",
+              )}
+              onClick={() => setShowHeatmap((v) => !v)}
+              title="Toggle resource heatmap"
+            >
+              Heatmap
+            </button>
+          </div>
+          <span className="text-xs font-normal normal-case tracking-normal">
+            {locations.length} locations / {agents.filter((a) => a.alive).length} agents
+            {validRoutes.length > 0 && ` / ${validRoutes.length} routes`}
+          </span>
+        </div>
       </div>
+
       <div ref={containerRef} className="flex-1 min-h-0 relative overflow-hidden p-0 bg-ocean">
         <svg ref={svgRef} className="block w-full h-full" />
-        {/* Legend */}
+
+        {/* Location detail popup (Phase 9.5.2) */}
+        {selectedLocationId &&
+          locationDetail &&
+          locationDetail.location.id === selectedLocationId &&
+          selectedLocationCoord &&
+          containerRect && (
+            <LocationDetailPopup
+              locationDetail={locationDetail}
+              coord={selectedLocationCoord}
+              containerRect={containerRect}
+              onClose={() => onSelectLocation(selectedLocationId)}
+              onSelectAgent={onSelectAgent}
+            />
+          )}
+
+        {/* Heatmap legend (Phase 9.5.4) */}
+        {showHeatmap && <HeatmapLegend />}
+
+        {/* Region legend */}
         <div className="absolute bottom-2 left-2 flex gap-3 text-xs font-mono text-text-secondary">
           {Object.entries(REGION_COLORS).map(([region, color]) => (
             <span key={region} className="flex items-center gap-1">
@@ -609,6 +1237,36 @@ export default function WorldMap({
             </span>
           ))}
         </div>
+
+        {/* Route type legend (when routes exist) */}
+        {validRoutes.length > 0 && (
+          <div className="absolute bottom-2 right-2 flex gap-3 text-2xs font-mono text-text-muted">
+            <span className="flex items-center gap-1">
+              <span
+                className="w-4 h-0.5 inline-block rounded"
+                style={{ background: getPathColor("Highway") }}
+              />
+              Highway
+            </span>
+            <span className="flex items-center gap-1">
+              <span
+                className="w-4 h-0.5 inline-block rounded"
+                style={{ background: getPathColor("Road") }}
+              />
+              Road
+            </span>
+            <span className="flex items-center gap-1">
+              <span
+                className="w-4 h-0.5 inline-block rounded border-dashed"
+                style={{
+                  background: "transparent",
+                  borderBottom: `1px dashed ${getPathColor("DirtTrail")}`,
+                }}
+              />
+              Trail
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ Weather: {{ weather }}
 {{ surroundings.location_description }}
 
 {% if surroundings.visible_resources %}### Resources Available Here
-{% for resource, quantity in surroundings.visible_resources %}  - {{ resource }}: {{ quantity }}
+{% for resource, quantity in surroundings.visible_resources|items %}  - {{ resource }}: {{ quantity }}
 {% endfor %}{% endif %}
 
 {% if surroundings.structures_here %}### Structures Here
@@ -17,7 +17,7 @@ Weather: {{ weather }}
 {% endfor %}{% endif %}
 
 {% if surroundings.agents_here %}### Other Agents Present
-{% for agent in surroundings.agents_here %}  - {{ agent.name }} ({{ agent.relationship }}) -- {{ agent.activity }}
+{% for agent in surroundings.agents_here %}  - {{ agent.name }} ({{ agent.sex }}, {{ agent.relationship }}) -- {{ agent.activity }}
 {% endfor %}{% endif %}
 
 {% if surroundings.messages_here %}### Recent Messages

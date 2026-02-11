@@ -5,8 +5,8 @@
 //! subjects, processes each one through the LLM pipeline, and publishes
 //! the resulting action on `tick.{N}.action.{agent_id}`.
 
-use emergence_types::{ActionRequest, Perception};
-use tracing::{debug, info};
+use emergence_types::{ActionRequest, DecisionRecord, Perception};
+use tracing::{debug, info, warn};
 
 use crate::error::RunnerError;
 
@@ -57,6 +57,37 @@ impl NatsClient {
         Ok(subscriber)
     }
 
+    /// Check whether a given agent ID belongs to this runner's partition.
+    ///
+    /// Uses the first 8 bytes of the UUID (which is time-ordered in `UUIDv7`)
+    /// hashed modulo `total_partitions`. When `total_partitions == 1`, all
+    /// agents belong to partition 0 (single-runner mode).
+    ///
+    /// Returns `true` if the agent should be handled by this runner instance.
+    pub fn is_my_agent(
+        agent_id: &emergence_types::AgentId,
+        partition_id: u32,
+        total_partitions: u32,
+    ) -> bool {
+        if total_partitions <= 1 {
+            return true;
+        }
+        // Use the UUID bytes directly for a deterministic partition assignment.
+        // We take bytes 0..4 as a big-endian u32 for a fast, stable hash.
+        let uuid = agent_id.into_inner();
+        let bytes = uuid.as_bytes();
+        let hash = u32::from_be_bytes([
+            *bytes.first().unwrap_or(&0),
+            *bytes.get(1).unwrap_or(&0),
+            *bytes.get(2).unwrap_or(&0),
+            *bytes.get(3).unwrap_or(&0),
+        ]);
+        #[allow(clippy::arithmetic_side_effects)]
+        {
+            hash.wrapping_rem(total_partitions) == partition_id
+        }
+    }
+
     /// Publish an action response for a specific agent and tick.
     ///
     /// The subject is `tick.{tick}.action.{agent_id}`.
@@ -83,6 +114,39 @@ impl NatsClient {
             .await
             .map_err(|e| RunnerError::Nats(format!("failed to publish to {subject}: {e}")))?;
         Ok(())
+    }
+
+    /// Publish a decision record for observability (fire-and-forget).
+    ///
+    /// The subject is `emergence.decisions.<tick>.<agent_id>`.
+    /// Serialization or publish failures are logged but do not propagate --
+    /// decision logging must never block the decision pipeline.
+    pub fn publish_decision(&self, record: &DecisionRecord) {
+        let subject = format!(
+            "emergence.decisions.{}.{}",
+            record.tick, record.agent_id
+        );
+        match serde_json::to_vec(record) {
+            Ok(payload) => {
+                let client = self.client.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = client.publish(subject.clone(), payload.into()).await {
+                        warn!(
+                            subject = subject,
+                            error = %e,
+                            "failed to publish decision record"
+                        );
+                    }
+                });
+            }
+            Err(e) => {
+                warn!(
+                    subject = subject,
+                    error = %e,
+                    "failed to serialize decision record"
+                );
+            }
+        }
     }
 
     /// Deserialize a NATS message payload into a [`Perception`].
@@ -172,10 +236,12 @@ mod tests {
             "self_state": {
                 "id": "01945c2a-3b4f-7def-8a12-bc34567890ab",
                 "name": "TestAgent",
+                "sex": "Male",
                 "age": 5,
                 "energy": 80,
                 "health": 100,
                 "hunger": 10,
+                "thirst": 0,
                 "location_name": "Forest Clearing",
                 "inventory": {},
                 "carry_load": "0/50",
@@ -209,10 +275,12 @@ mod tests {
                     self_state: emergence_types::SelfState {
                         id: emergence_types::AgentId::new(),
                         name: String::new(),
+                        sex: emergence_types::Sex::Male,
                         age: 0,
                         energy: 0,
                         health: 0,
                         hunger: 0,
+                        thirst: 0,
                         location_name: String::new(),
                         inventory: std::collections::BTreeMap::new(),
                         carry_load: String::new(),
@@ -268,5 +336,36 @@ mod tests {
                 tracing::error!("subscription failed: {e}");
                 std::process::exit(1);
             });
+    }
+
+    #[test]
+    fn single_partition_accepts_all_agents() {
+        let agent_id = emergence_types::AgentId::new();
+        assert!(NatsClient::is_my_agent(&agent_id, 0, 1));
+    }
+
+    #[test]
+    fn partitioning_is_deterministic() {
+        let agent_id = emergence_types::AgentId::new();
+        // Same agent always maps to the same partition.
+        let result_a = NatsClient::is_my_agent(&agent_id, 0, 4);
+        let result_b = NatsClient::is_my_agent(&agent_id, 0, 4);
+        assert_eq!(result_a, result_b);
+    }
+
+    #[test]
+    fn partitioning_covers_all_agents() {
+        // With 4 partitions, every agent belongs to exactly one.
+        let total = 4;
+        for _ in 0..20 {
+            let agent_id = emergence_types::AgentId::new();
+            let mut count = 0u32;
+            for pid in 0..total {
+                if NatsClient::is_my_agent(&agent_id, pid, total) {
+                    count = count.saturating_add(1);
+                }
+            }
+            assert_eq!(count, 1, "agent should belong to exactly one partition");
+        }
     }
 }

@@ -1,34 +1,73 @@
 /**
- * Population Tracker Panel (Task 4.5.6)
+ * Population Tracker Panel (Task 4.5.6, Phase 9.6, Phase 10.1.6)
  *
  * Line chart of population over time. Average age display.
- * Generation distribution. Death causes breakdown.
- * Oldest living agent highlight.
+ * Generation distribution. Death causes breakdown (pie chart + table).
+ * Lifespan distribution histogram by generation.
+ * Sex ratio display. Oldest living agent highlight.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import * as d3 from "d3";
 
 import type { AgentListItem, PopulationStats, TickBroadcast } from "../types/generated/index.ts";
-import { formatDecimal, formatNumber } from "../utils/format.ts";
-import { MOCK_AGENTS, MOCK_WORLD_SNAPSHOT, generateMockTickHistory } from "../utils/mockData.ts";
+import { formatDecimal, formatNumber, formatTick } from "../utils/format.ts";
 
 interface PopulationTrackerProps {
   populationStats: PopulationStats | null;
   agents: AgentListItem[];
   tickHistory: TickBroadcast[];
-  useMock?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Death cause colors (colorblind-safe palette)
+// ---------------------------------------------------------------------------
+
+const DEATH_CAUSE_COLORS: Record<string, string> = {
+  starvation: "var(--color-chart-5)",
+  dehydration: "var(--color-chart-1)",
+  old_age: "var(--color-chart-4)",
+  combat: "var(--color-danger)",
+  disease: "var(--color-chart-3)",
+  exposure: "var(--color-chart-6)",
+  unknown: "var(--color-text-muted)",
+};
+
+function getDeathCauseColor(cause: string): string {
+  const normalized = cause.toLowerCase().replace(/\s+/g, "_");
+  return DEATH_CAUSE_COLORS[normalized] ?? "var(--color-chart-7)";
+}
+
+function formatCauseName(cause: string): string {
+  return cause
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ---------------------------------------------------------------------------
+// Generation colors for histogram
+// ---------------------------------------------------------------------------
+
+const GEN_COLORS = [
+  "var(--color-chart-1)",
+  "var(--color-chart-2)",
+  "var(--color-chart-3)",
+  "var(--color-chart-4)",
+  "var(--color-chart-5)",
+  "var(--color-chart-6)",
+  "var(--color-chart-7)",
+  "var(--color-chart-8)",
+];
+
+function getGenColor(gen: number): string {
+  return GEN_COLORS[gen % GEN_COLORS.length] ?? "var(--color-text-muted)";
 }
 
 export default function PopulationTracker({
-  populationStats: propStats,
-  agents: propAgents,
-  tickHistory: propHistory,
-  useMock = false,
+  populationStats: stats,
+  agents,
+  tickHistory,
 }: PopulationTrackerProps) {
-  const stats = useMock ? MOCK_WORLD_SNAPSHOT.population : propStats;
-  const agents = useMock ? MOCK_AGENTS : propAgents;
-  const tickHistory = useMock ? generateMockTickHistory(100) : propHistory;
 
   // Compute generation distribution.
   const generationDist = useMemo(() => {
@@ -74,6 +113,76 @@ export default function PopulationTracker({
     return buckets;
   }, [agents]);
 
+  // Sex ratio computation.
+  const sexRatio = useMemo(() => {
+    let male = 0;
+    let female = 0;
+    for (const agent of agents) {
+      if (agent.alive) {
+        if (agent.sex === "Male") male++;
+        else if (agent.sex === "Female") female++;
+      }
+    }
+    return { male, female };
+  }, [agents]);
+
+  // Death cause breakdown.
+  const deathBreakdown = useMemo(() => {
+    const causes: Record<string, number> = {};
+    for (const agent of agents) {
+      if (!agent.alive && agent.cause_of_death) {
+        const cause = agent.cause_of_death;
+        causes[cause] = (causes[cause] ?? 0) + 1;
+      }
+    }
+    return Object.entries(causes)
+      .map(([cause, count]) => ({ cause, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [agents]);
+
+  // Death table: all dead agents with details.
+  const deathTable = useMemo(() => {
+    return agents
+      .filter((a) => !a.alive && a.died_at_tick !== null)
+      .map((a) => ({
+        name: a.name,
+        sex: a.sex,
+        age: a.died_at_tick !== null ? a.died_at_tick - a.born_at_tick : 0,
+        cause: a.cause_of_death ?? "Unknown",
+        tick: a.died_at_tick ?? 0,
+        generation: a.generation,
+      }))
+      .sort((a, b) => b.tick - a.tick);
+  }, [agents]);
+
+  // Lifespan distribution by generation (for dead agents only).
+  const lifespanByGeneration = useMemo(() => {
+    const deadAgents = agents.filter((a) => !a.alive && a.died_at_tick !== null);
+    if (deadAgents.length === 0) return { buckets: [] as { range: string; rangeStart: number; counts: Record<number, number> }[], generations: [] as number[] };
+
+    const lifespans = deadAgents.map((a) => ({
+      lifespan: (a.died_at_tick ?? 0) - a.born_at_tick,
+      generation: a.generation,
+    }));
+
+    const maxLifespan = Math.max(...lifespans.map((l) => l.lifespan));
+    const bucketSize = Math.max(25, Math.ceil(maxLifespan / 8));
+    const generations = [...new Set(lifespans.map((l) => l.generation))].sort((a, b) => a - b);
+
+    const buckets: { range: string; rangeStart: number; counts: Record<number, number> }[] = [];
+    for (let i = 0; i <= maxLifespan; i += bucketSize) {
+      const counts: Record<number, number> = {};
+      for (const gen of generations) {
+        counts[gen] = lifespans.filter(
+          (l) => l.generation === gen && l.lifespan >= i && l.lifespan < i + bucketSize,
+        ).length;
+      }
+      buckets.push({ range: `${i}-${i + bucketSize}`, rangeStart: i, counts });
+    }
+
+    return { buckets, generations };
+  }, [agents]);
+
   if (!stats) {
     return (
       <div className="h-full bg-bg-secondary border border-border-primary rounded-md overflow-hidden">
@@ -96,8 +205,8 @@ export default function PopulationTracker({
       </div>
       <div className="p-md flex-1 overflow-y-auto">
         {/* Top stats */}
-        <div className="flex gap-sm mb-md">
-          <div className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+        <div className="flex gap-sm mb-md flex-wrap">
+          <div className="flex-1 min-w-[80px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
             <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
               Alive
             </div>
@@ -105,7 +214,7 @@ export default function PopulationTracker({
               {formatNumber(stats.total_alive)}
             </div>
           </div>
-          <div className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+          <div className="flex-1 min-w-[80px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
             <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
               Dead
             </div>
@@ -113,7 +222,7 @@ export default function PopulationTracker({
               {formatNumber(stats.total_dead)}
             </div>
           </div>
-          <div className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+          <div className="flex-1 min-w-[80px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
             <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
               Avg Age
             </div>
@@ -121,17 +230,27 @@ export default function PopulationTracker({
               {formatDecimal(stats.average_age, 0)}
             </div>
           </div>
-          <div className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+          <div className="flex-1 min-w-[80px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
             <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
               Births
             </div>
             <div className="text-lg font-bold text-success font-mono">{stats.births_this_tick}</div>
           </div>
-          <div className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+          <div className="flex-1 min-w-[80px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
             <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
               Deaths
             </div>
             <div className="text-lg font-bold text-danger font-mono">{stats.deaths_this_tick}</div>
+          </div>
+          <div className="flex-1 min-w-[80px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+            <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
+              Sex Ratio
+            </div>
+            <div className="text-sm font-bold text-text-primary font-mono">
+              <span className="text-chart-1">{sexRatio.male}</span>
+              <span className="text-text-muted mx-0.5">/</span>
+              <span className="text-chart-5">{sexRatio.female}</span>
+            </div>
           </div>
         </div>
 
@@ -139,7 +258,9 @@ export default function PopulationTracker({
         {oldestAgent && oldestAgent.vitals && (
           <div className="flex items-center gap-sm px-md py-sm bg-bg-tertiary rounded-sm mb-md text-sm font-mono">
             <span className="text-text-secondary">Oldest:</span>
-            <span className="text-text-accent font-semibold">{oldestAgent.name}</span>
+            <span className="text-text-accent font-semibold">
+              {oldestAgent.sex === "Male" ? "\u2642" : "\u2640"} {oldestAgent.name}
+            </span>
             <span className="text-text-muted">
               (age {formatNumber(oldestAgent.vitals.age)} ticks, Gen {oldestAgent.generation})
             </span>
@@ -156,11 +277,11 @@ export default function PopulationTracker({
         <div className="font-mono text-2xs text-text-muted uppercase tracking-widest mt-md mb-sm pb-xs border-b border-border-secondary">
           Generation Distribution
         </div>
-        <div className="flex gap-sm mb-md">
+        <div className="flex gap-sm mb-md flex-wrap">
           {generationDist.map((g) => (
             <div
               key={g.generation}
-              className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center"
+              className="flex-1 min-w-[70px] bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center"
             >
               <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
                 Gen {g.generation}
@@ -183,6 +304,60 @@ export default function PopulationTracker({
           Age Distribution
         </div>
         <AgeHistogram data={ageDistribution} />
+
+        {/* Death cause breakdown */}
+        <div className="font-mono text-2xs text-text-muted uppercase tracking-widest mt-md mb-sm pb-xs border-b border-border-secondary">
+          Cause of Death Breakdown
+        </div>
+        {deathBreakdown.length > 0 ? (
+          <div className="flex gap-lg mb-md items-start flex-wrap">
+            <DeathPieChart data={deathBreakdown} />
+            <div className="flex-1 min-w-[200px]">
+              <div className="flex flex-wrap gap-sm">
+                {deathBreakdown.map((d) => (
+                  <div key={d.cause} className="flex items-center gap-1.5 text-xs font-mono">
+                    <span
+                      className="w-2.5 h-2.5 rounded-sm inline-block shrink-0"
+                      style={{ background: getDeathCauseColor(d.cause) }}
+                    />
+                    <span className="text-text-primary">{formatCauseName(d.cause)}</span>
+                    <span className="text-text-muted">({d.count})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-text-muted font-mono text-xs mb-md">No deaths recorded yet.</div>
+        )}
+
+        {/* Death table */}
+        {deathTable.length > 0 && (
+          <DeathTable deaths={deathTable} />
+        )}
+
+        {/* Lifespan distribution by generation */}
+        <div className="font-mono text-2xs text-text-muted uppercase tracking-widest mt-md mb-sm pb-xs border-b border-border-secondary">
+          Lifespan Distribution by Generation
+        </div>
+        {lifespanByGeneration.buckets.length > 0 ? (
+          <>
+            <LifespanHistogram data={lifespanByGeneration} />
+            <div className="flex gap-md mt-sm mb-md flex-wrap">
+              {lifespanByGeneration.generations.map((gen) => (
+                <div key={gen} className="flex items-center gap-1.5 text-xs font-mono">
+                  <span
+                    className="w-2.5 h-2.5 rounded-sm inline-block shrink-0"
+                    style={{ background: getGenColor(gen) }}
+                  />
+                  <span className="text-text-secondary">Gen {gen}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="text-text-muted font-mono text-xs mb-md">No lifespan data yet (no deaths recorded).</div>
+        )}
       </div>
     </div>
   );
@@ -211,7 +386,7 @@ function PopulationChart({ tickHistory }: { tickHistory: TickBroadcast[] }) {
         .attr("x", 250)
         .attr("y", 70)
         .attr("text-anchor", "middle")
-        .attr("fill", "#484f58")
+        .attr("fill", "var(--color-text-muted)")
         .attr("font-size", "12px")
         .attr("font-family", "var(--font-mono)")
         .text("Waiting for tick data...");
@@ -317,7 +492,7 @@ function AgeHistogram({ data }: { data: { range: string; count: number }[] }) {
         .attr("x", 250)
         .attr("y", 50)
         .attr("text-anchor", "middle")
-        .attr("fill", "#484f58")
+        .attr("fill", "var(--color-text-muted)")
         .attr("font-size", "12px")
         .attr("font-family", "var(--font-mono)")
         .text("No age data available");
@@ -365,7 +540,213 @@ function AgeHistogram({ data }: { data: { range: string; count: number }[] }) {
   }, [data]);
 
   return (
-    <div className="chart-container">
+    <div className="chart-container mb-md">
+      <svg ref={svgRef} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Death Pie Chart (SVG arc)
+// ---------------------------------------------------------------------------
+
+function DeathPieChart({ data }: { data: { cause: string; count: number }[] }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
+
+    const size = 160;
+    const radius = size / 2 - 10;
+
+    svg.attr("viewBox", `0 0 ${size} ${size}`);
+    const g = svg.append("g").attr("transform", `translate(${size / 2},${size / 2})`);
+
+    const pie = d3
+      .pie<{ cause: string; count: number }>()
+      .value((d) => d.count)
+      .sort(null);
+
+    const arc = d3
+      .arc<d3.PieArcDatum<{ cause: string; count: number }>>()
+      .innerRadius(radius * 0.45)
+      .outerRadius(radius);
+
+    const arcs = pie(data);
+    const total = d3.sum(data, (d) => d.count);
+
+    g.selectAll("path")
+      .data(arcs)
+      .join("path")
+      .attr("d", arc)
+      .attr("fill", (d) => getDeathCauseColor(d.data.cause))
+      .attr("stroke", "var(--color-bg-secondary)")
+      .attr("stroke-width", 2);
+
+    // Center label: total deaths.
+    g.append("text")
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .attr("fill", "var(--color-text-primary)")
+      .attr("font-family", "var(--font-mono)")
+      .attr("font-size", "14px")
+      .attr("font-weight", "bold")
+      .text(String(total));
+
+  }, [data]);
+
+  return (
+    <div className="w-[160px] h-[160px] shrink-0">
+      <svg ref={svgRef} className="w-full h-full" />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Death Table (scrollable, most recent first)
+// ---------------------------------------------------------------------------
+
+interface DeathEntry {
+  name: string;
+  sex: "Male" | "Female";
+  age: number;
+  cause: string;
+  tick: number;
+  generation: number;
+}
+
+function DeathTable({ deaths }: { deaths: DeathEntry[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const display = showAll ? deaths : deaths.slice(0, 10);
+
+  return (
+    <div className="mb-md">
+      <div className="text-xs font-mono">
+        <div className="grid grid-cols-[1fr_30px_60px_90px_70px_50px] px-sm py-xs text-text-muted border-b border-border-primary">
+          <span>Name</span>
+          <span>Sex</span>
+          <span className="text-right">Age</span>
+          <span className="text-right">Cause</span>
+          <span className="text-right">Tick</span>
+          <span className="text-right">Gen</span>
+        </div>
+        {display.map((d, i) => (
+          <div
+            key={`${d.name}-${d.tick}-${i}`}
+            className="grid grid-cols-[1fr_30px_60px_90px_70px_50px] px-sm py-xs border-b border-border-secondary"
+          >
+            <span className="text-text-primary truncate">{d.name}</span>
+            <span className="text-text-secondary">{d.sex === "Male" ? "\u2642" : "\u2640"}</span>
+            <span className="text-right text-text-primary">{formatNumber(d.age)}</span>
+            <span className="text-right text-text-secondary truncate">{formatCauseName(d.cause)}</span>
+            <span className="text-right text-text-muted">{formatTick(d.tick)}</span>
+            <span className="text-right text-text-muted">{d.generation}</span>
+          </div>
+        ))}
+      </div>
+      {deaths.length > 10 && (
+        <button
+          className="mt-sm text-xs font-mono text-text-accent cursor-pointer bg-transparent border-0 hover:underline"
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? "Show less" : `Show all ${deaths.length} deaths`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lifespan Distribution Histogram by Generation
+// ---------------------------------------------------------------------------
+
+function LifespanHistogram({
+  data,
+}: {
+  data: { buckets: { range: string; rangeStart: number; counts: Record<number, number> }[]; generations: number[] };
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
+
+    const { buckets, generations } = data;
+    if (buckets.length === 0) return;
+
+    const width = 500;
+    const height = 130;
+    const margin = { top: 8, right: 10, bottom: 28, left: 35 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    svg.attr("viewBox", `0 0 ${width} ${height}`);
+    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const x = d3
+      .scaleBand()
+      .domain(buckets.map((b) => b.range))
+      .range([0, innerW])
+      .padding(0.2);
+
+    // For stacked bars, compute max total per bucket.
+    const maxTotal = d3.max(buckets, (b) => {
+      return d3.sum(generations, (gen) => b.counts[gen] ?? 0);
+    }) ?? 1;
+
+    const y = d3.scaleLinear().domain([0, maxTotal]).range([innerH, 0]);
+
+    // X axis.
+    g.append("g")
+      .attr("class", "axis")
+      .attr("transform", `translate(0,${innerH})`)
+      .call(d3.axisBottom(x))
+      .selectAll("text")
+      .attr("font-size", "8px")
+      .attr("transform", "rotate(-20)")
+      .attr("text-anchor", "end");
+
+    // Y axis.
+    g.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(4));
+
+    // Stacked bars.
+    buckets.forEach((bucket) => {
+      const xPos = x(bucket.range) ?? 0;
+      const barWidth = x.bandwidth();
+      let yOffset = innerH;
+
+      for (const gen of generations) {
+        const count = bucket.counts[gen] ?? 0;
+        if (count === 0) continue;
+        const barHeight = innerH - y(count);
+        yOffset -= barHeight;
+
+        g.append("rect")
+          .attr("x", xPos)
+          .attr("y", yOffset)
+          .attr("width", barWidth)
+          .attr("height", barHeight)
+          .attr("fill", getGenColor(gen))
+          .attr("opacity", 0.75);
+      }
+    });
+
+    // Y-axis label.
+    g.append("text")
+      .attr("transform", "rotate(-90)")
+      .attr("x", -innerH / 2)
+      .attr("y", -28)
+      .attr("text-anchor", "middle")
+      .attr("fill", "var(--color-text-muted)")
+      .attr("font-size", "9px")
+      .attr("font-family", "var(--font-mono)")
+      .text("Deaths");
+
+  }, [data]);
+
+  return (
+    <div className="chart-container mb-sm">
       <svg ref={svgRef} />
     </div>
   );

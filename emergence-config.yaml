@@ -65,10 +65,19 @@ simulation:
   max_ticks: 0                            # 0 = unlimited, otherwise hard stop at this tick
   max_real_time_seconds: 86400            # 24 hours default, 0 = unlimited
   end_condition: "time_limit"             # time_limit | extinction | era_reached | manual
+  min_population: 2                       # Auto-spawn agents when population drops below this (0 = disabled)
 
 operator:
   api_enabled: true
   api_auth_token: ""                      # Bearer token for operator REST endpoints
+
+agents:
+  seed_count: 2                           # Number of starting agents (start small, test natural reproduction)
+  personality_mode: random                # random, balanced, or custom
+  seed_knowledge:
+    - "fire"
+    - "basic_tools"
+    - "foraging"
 
 llm:
   default_backend: "openai"

@@ -39,8 +39,11 @@ impl<'a> LedgerStore<'a> {
 
     /// Batch-insert ledger entries into the `ledger` table.
     ///
-    /// Entries are inserted in batches for efficiency. Each batch is
-    /// wrapped in a transaction for atomicity.
+    /// Entries are inserted in batches using multi-row UNNEST for efficiency.
+    /// Each batch is wrapped in a transaction for atomicity.
+    ///
+    /// Optimization: instead of N individual INSERT statements per batch,
+    /// a single INSERT with UNNEST arrays reduces round-trips.
     ///
     /// # Arguments
     ///
@@ -58,40 +61,60 @@ impl<'a> LedgerStore<'a> {
         for chunk in entries.chunks(self.batch_size) {
             let mut tx = self.pool.begin().await?;
 
-            for entry in chunk {
-                let entry_type_str = ledger_entry_type_to_db(entry.entry_type);
-                let from_entity: Option<Uuid> = entry.from_entity;
-                let from_entity_type_str =
-                    entry.from_entity_type.map(entity_type_to_db);
-                let to_entity: Option<Uuid> = entry.to_entity;
-                let to_entity_type_str =
-                    entry.to_entity_type.map(entity_type_to_db);
-                let resource_str = resource_to_db(entry.resource);
+            let len = chunk.len();
+            let mut ids = Vec::with_capacity(len);
+            let mut ticks = Vec::with_capacity(len);
+            let mut entry_types = Vec::with_capacity(len);
+            let mut from_entities: Vec<Option<Uuid>> = Vec::with_capacity(len);
+            let mut from_entity_types: Vec<Option<String>> = Vec::with_capacity(len);
+            let mut to_entities: Vec<Option<Uuid>> = Vec::with_capacity(len);
+            let mut to_entity_types: Vec<Option<String>> = Vec::with_capacity(len);
+            let mut resources = Vec::with_capacity(len);
+            let mut quantities = Vec::with_capacity(len);
+            let mut reasons = Vec::with_capacity(len);
+            let mut reference_ids: Vec<Option<Uuid>> = Vec::with_capacity(len);
+            let mut timestamps = Vec::with_capacity(len);
 
-                sqlx::query(
-                    r"INSERT INTO ledger (id, tick, entry_type, from_entity, from_entity_type, to_entity, to_entity_type, resource, quantity, reason, reference_id, created_at)
-                      VALUES ($1, $2, $3::ledger_entry_type, $4, $5::entity_type, $6, $7::entity_type, $8, $9, $10, $11, $12)",
-                )
-                .bind(entry.id.into_inner())
-                .bind(i64::try_from(entry.tick).unwrap_or(i64::MAX))
-                .bind(entry_type_str)
-                .bind(from_entity)
-                .bind(from_entity_type_str)
-                .bind(to_entity)
-                .bind(to_entity_type_str)
-                .bind(resource_str)
-                .bind(entry.quantity)
-                .bind(&entry.reason)
-                .bind(entry.reference_id)
-                .bind(entry.created_at)
-                .execute(&mut *tx)
-                .await?;
+            for entry in chunk {
+                ids.push(entry.id.into_inner());
+                ticks.push(i64::try_from(entry.tick).unwrap_or(i64::MAX));
+                entry_types.push(ledger_entry_type_to_db(entry.entry_type).to_owned());
+                from_entities.push(entry.from_entity);
+                from_entity_types
+                    .push(entry.from_entity_type.map(|e| entity_type_to_db(e).to_owned()));
+                to_entities.push(entry.to_entity);
+                to_entity_types
+                    .push(entry.to_entity_type.map(|e| entity_type_to_db(e).to_owned()));
+                resources.push(resource_to_db(entry.resource).to_owned());
+                quantities.push(entry.quantity);
+                reasons.push(entry.reason.clone());
+                reference_ids.push(entry.reference_id);
+                timestamps.push(entry.created_at);
             }
+
+            sqlx::query(
+                r"INSERT INTO ledger (id, tick, entry_type, from_entity, from_entity_type, to_entity, to_entity_type, resource, quantity, reason, reference_id, created_at)
+                  SELECT * FROM UNNEST($1::UUID[], $2::BIGINT[], $3::ledger_entry_type[], $4::UUID[], $5::entity_type[], $6::UUID[], $7::entity_type[], $8::TEXT[], $9::NUMERIC[], $10::TEXT[], $11::UUID[], $12::TIMESTAMPTZ[])",
+            )
+            .bind(&ids)
+            .bind(&ticks)
+            .bind(&entry_types)
+            .bind(&from_entities)
+            .bind(&from_entity_types)
+            .bind(&to_entities)
+            .bind(&to_entity_types)
+            .bind(&resources)
+            .bind(&quantities)
+            .bind(&reasons)
+            .bind(&reference_ids)
+            .bind(&timestamps)
+            .execute(&mut *tx)
+            .await?;
 
             tx.commit().await?;
         }
 
-        tracing::debug!(count = entries.len(), "Inserted ledger entries");
+        tracing::debug!(count = entries.len(), "Inserted ledger entries (batch UNNEST)");
         Ok(())
     }
 

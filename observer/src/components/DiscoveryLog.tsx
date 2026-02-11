@@ -8,14 +8,12 @@ import { useMemo } from "react";
 
 import type { AgentListItem, Era, Event, WorldSnapshot } from "../types/generated/index.ts";
 import { formatNumber, formatTick } from "../utils/format.ts";
-import { MOCK_EVENTS, MOCK_WORLD_SNAPSHOT } from "../utils/mockData.ts";
 
 interface DiscoveryLogProps {
   worldSnapshot: WorldSnapshot | null;
   events: Event[];
   agents: AgentListItem[];
   agentNames: Map<string, string>;
-  useMock?: boolean;
 }
 
 const ERA_ORDER: Era[] = [
@@ -104,26 +102,12 @@ const TECH_TREE: Record<string, string[]> = {
 };
 
 export default function DiscoveryLog({
-  worldSnapshot: propSnapshot,
-  events: propEvents,
-  agents: _propAgents,
-  agentNames: propAgentNames,
-  useMock = false,
+  worldSnapshot: snapshot,
+  events,
+  agents: _agents,
+  agentNames,
 }: DiscoveryLogProps) {
-  const snapshot = useMock ? MOCK_WORLD_SNAPSHOT : propSnapshot;
-  const events = useMock ? MOCK_EVENTS : propEvents;
-  // _propAgents available for future per-agent knowledge breakdown.
-
-  const agentNames = useMemo(() => {
-    if (!useMock) return propAgentNames;
-    return new Map([
-      ["01945c2a-3b4f-7def-8a12-bc34567890a1", "Kora"],
-      ["01945c2a-3b4f-7def-8a12-bc34567890a2", "Maren"],
-      ["01945c2a-3b4f-7def-8a12-bc34567890a3", "Dax"],
-      ["01945c2a-3b4f-7def-8a12-bc34567890a4", "Vela"],
-      ["01945c2a-3b4f-7def-8a12-bc34567890a5", "Rune"],
-    ]);
-  }, [useMock, propAgentNames]);
+  // _agents available for future per-agent knowledge breakdown.
 
   const discoveries = useMemo(() => snapshot?.discoveries ?? [], [snapshot]);
   const currentEra = snapshot?.era ?? "Primitive";

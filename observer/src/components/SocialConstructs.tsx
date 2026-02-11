@@ -1,18 +1,23 @@
 /**
- * Social Constructs Panel (Task 6.4.7)
+ * Social Constructs Panel (Task 6.4.7, Phase 9.7.2-9.7.3)
  *
- * Tabbed panel with 5 sub-views: Religion, Governance, Family,
- * Economy (extended), and Crime & Justice. Displays emergent social
- * constructs detected by the simulation engine.
+ * Tabbed panel with 6 sub-views: Religion, Governance, Family,
+ * Economy (extended), Crime & Justice, and Civilization Timeline.
+ * Fetches data from 5 social construct API endpoints on tick update.
+ * The Civilization Timeline aggregates milestones from all constructs
+ * to show the arc of emergent civilization.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import * as d3 from "d3";
 
+import { useSocialConstructs } from "../hooks/useApi.ts";
 import { cn } from "../lib/utils.ts";
 import type {
   BeliefEvent,
   BeliefSystem,
+  CivilizationMilestone,
+  CivilizationMilestoneCategory,
   CrimeStats,
   EconomicClassification,
   FamilyStats,
@@ -20,23 +25,16 @@ import type {
   LineageNode,
 } from "../types/generated/index.ts";
 import { formatNumber, formatResourceName, formatTick, getResourceColor } from "../utils/format.ts";
-import {
-  MOCK_BELIEF_EVENTS,
-  MOCK_BELIEF_SYSTEMS,
-  MOCK_CRIME_STATS,
-  MOCK_ECONOMIC_CLASSIFICATION,
-  MOCK_FAMILY_STATS,
-  MOCK_GOVERNANCE,
-} from "../utils/mockData.ts";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type SubTab = "religion" | "governance" | "family" | "economy" | "crime";
+type SubTab = "religion" | "governance" | "family" | "economy" | "crime" | "timeline";
 
 interface SocialConstructsProps {
-  useMock?: boolean;
+  /** Current simulation tick -- triggers data refetch when it changes. */
+  currentTick?: number;
 }
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
@@ -45,32 +43,63 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "family", label: "Family" },
   { id: "economy", label: "Economy" },
   { id: "crime", label: "Crime & Justice" },
+  { id: "timeline", label: "Civ Timeline" },
 ];
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export default function SocialConstructs({ useMock: _useMock = false }: SocialConstructsProps) {
+/** Empty state placeholder shown when no data is available for a sub-panel. */
+function EmptyState({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center p-xl text-text-muted font-mono text-xs text-center min-h-[120px]">
+      No {label} data available yet. Waiting for simulation data...
+    </div>
+  );
+}
+
+export default function SocialConstructs({
+  currentTick = 0,
+}: SocialConstructsProps) {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("religion");
 
-  // In production, data would come from REST API hooks (e.g. useSocialConstructs()).
-  // For now, mock data is the only source. The _useMock prop is accepted for
-  // consistency with other panels; when live API hooks are wired up, the ternary
-  // will differentiate between live and mock data sources.
-  const beliefSystems = MOCK_BELIEF_SYSTEMS;
-  const beliefEvents = MOCK_BELIEF_EVENTS;
-  const governance = MOCK_GOVERNANCE;
-  const familyStats = MOCK_FAMILY_STATS;
-  const economicClassification = MOCK_ECONOMIC_CLASSIFICATION;
-  const crimeStats = MOCK_CRIME_STATS;
+  // Fetch data from all 5 social construct API endpoints.
+  const {
+    beliefSystems,
+    beliefEvents,
+    governance,
+    familyStats,
+    economicClassification,
+    crimeStats,
+    loading,
+    error,
+    refetch,
+  } = useSocialConstructs();
+
+  // Refetch when tick changes.
+  useEffect(() => {
+    if (currentTick > 0) {
+      refetch();
+    }
+    // Only re-run when tick number changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTick]);
+
+  // Build civilization milestones from all social construct data.
+  const milestones = useMemo(
+    () => buildCivilizationMilestones(beliefSystems, beliefEvents, governance, familyStats, economicClassification, crimeStats),
+    [beliefSystems, beliefEvents, governance, familyStats, economicClassification, crimeStats],
+  );
 
   return (
     <div className="h-full flex flex-col bg-bg-secondary border border-border-primary rounded-md overflow-hidden">
       {/* Panel header */}
       <div className="flex items-center justify-between px-md py-sm bg-bg-tertiary border-b border-border-primary text-xs font-semibold text-text-secondary font-mono uppercase tracking-wide">
         <span>Social Constructs</span>
-        <span className="text-xs font-normal">Emergent Patterns</span>
+        <span className="text-xs font-normal">
+          {loading ? "Loading..." : error ? "Partial data" : "Emergent Patterns"}
+        </span>
       </div>
 
       {/* Sub-tab navigation */}
@@ -87,6 +116,9 @@ export default function SocialConstructs({ useMock: _useMock = false }: SocialCo
             onClick={() => setActiveSubTab(tab.id)}
           >
             {tab.label}
+            {tab.id === "timeline" && milestones.length > 0 && (
+              <span className="ml-1 text-2xs text-text-muted">({milestones.length})</span>
+            )}
           </button>
         ))}
       </nav>
@@ -94,14 +126,35 @@ export default function SocialConstructs({ useMock: _useMock = false }: SocialCo
       {/* Sub-tab content */}
       <div className="flex-1 min-h-0 overflow-y-auto p-md">
         {activeSubTab === "religion" && (
-          <ReligionPanel beliefSystems={beliefSystems} beliefEvents={beliefEvents} />
+          beliefSystems.length === 0 && beliefEvents.length === 0
+            ? <EmptyState label="religion" />
+            : <ReligionPanel beliefSystems={beliefSystems} beliefEvents={beliefEvents} />
         )}
-        {activeSubTab === "governance" && <GovernancePanel governance={governance} />}
-        {activeSubTab === "family" && <FamilyPanel familyStats={familyStats} />}
+        {activeSubTab === "governance" && (
+          governance
+            ? <GovernancePanel governance={governance} />
+            : <EmptyState label="governance" />
+        )}
+        {activeSubTab === "family" && (
+          familyStats
+            ? <FamilyPanel familyStats={familyStats} />
+            : <EmptyState label="family" />
+        )}
         {activeSubTab === "economy" && (
-          <EconomyExtendedPanel classification={economicClassification} />
+          economicClassification
+            ? <EconomyExtendedPanel classification={economicClassification} />
+            : <EmptyState label="economic classification" />
         )}
-        {activeSubTab === "crime" && <CrimePanel crimeStats={crimeStats} />}
+        {activeSubTab === "crime" && (
+          crimeStats
+            ? <CrimePanel crimeStats={crimeStats} />
+            : <EmptyState label="crime & justice" />
+        )}
+        {activeSubTab === "timeline" && (
+          milestones.length === 0
+            ? <EmptyState label="civilization timeline" />
+            : <CivilizationTimeline milestones={milestones} />
+        )}
       </div>
     </div>
   );
@@ -1256,5 +1309,357 @@ function CrimeRateChart({ history }: { history: { tick: number; rate: number }[]
     <div className="chart-container mb-sm">
       <svg ref={svgRef} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 6. Civilization Timeline (Phase 9.7.3)
+// ---------------------------------------------------------------------------
+
+/** Category badge styling for milestone entries. */
+function milestoneCategoryClasses(category: CivilizationMilestoneCategory): string {
+  switch (category) {
+    case "belief":
+      return "bg-lifecycle/15 text-lifecycle";
+    case "governance":
+      return "bg-info/15 text-info";
+    case "family":
+      return "bg-success/15 text-success";
+    case "economy":
+      return "bg-warning/15 text-warning";
+    case "crime":
+      return "bg-danger/15 text-danger";
+  }
+}
+
+/** Category label for display. */
+function milestoneCategoryLabel(category: CivilizationMilestoneCategory): string {
+  switch (category) {
+    case "belief":
+      return "BELIEF";
+    case "governance":
+      return "GOVERNANCE";
+    case "family":
+      return "FAMILY";
+    case "economy":
+      return "ECONOMY";
+    case "crime":
+      return "CRIME";
+  }
+}
+
+/**
+ * Build civilization milestones from all social construct data.
+ *
+ * Each milestone represents a significant "first" or emergence event:
+ * - First belief system founded
+ * - Governance type detected
+ * - First family formed / first marriage
+ * - Economic model classification
+ * - First crime detected / justice system emerged
+ */
+function buildCivilizationMilestones(
+  beliefSystems: BeliefSystem[],
+  beliefEvents: BeliefEvent[],
+  governance: GovernanceInfo | null,
+  familyStats: FamilyStats | null,
+  economicClassification: EconomicClassification | null,
+  crimeStats: CrimeStats | null,
+): CivilizationMilestone[] {
+  const milestones: CivilizationMilestone[] = [];
+
+  // Belief milestones: each belief system founding is a milestone.
+  for (const bs of beliefSystems) {
+    milestones.push({
+      tick: bs.founded_at_tick,
+      category: "belief",
+      label: `Belief system founded: ${bs.name}`,
+      description: `A belief system around "${bs.themes.join(", ")}" emerged with ${bs.adherent_count} adherents`,
+    });
+  }
+
+  // Belief events (schisms, mergers, conversions).
+  for (const ev of beliefEvents) {
+    if (ev.event_type !== "founded") {
+      milestones.push({
+        tick: ev.tick,
+        category: "belief",
+        label: `Belief ${ev.event_type}: ${ev.belief_system_name}`,
+        description: ev.description,
+      });
+    }
+  }
+
+  // Governance milestones.
+  if (governance && governance.governance_type !== "Anarchy") {
+    // Use earliest leader's since_tick as founding tick.
+    const foundingTick = governance.leaders.length > 0
+      ? Math.min(...governance.leaders.map((l) => l.since_tick))
+      : 0;
+
+    milestones.push({
+      tick: foundingTick,
+      category: "governance",
+      label: `Governance established: ${governance.governance_type}`,
+      description: `${governance.governance_type} governance with ${governance.leaders.length} leader${governance.leaders.length === 1 ? "" : "s"} and ${governance.rules.length} rule${governance.rules.length === 1 ? "" : "s"}`,
+    });
+
+    // Each governance event is also a milestone.
+    for (const ev of governance.recent_events) {
+      milestones.push({
+        tick: ev.tick,
+        category: "governance",
+        label: `Governance ${ev.event_type}`,
+        description: ev.description,
+      });
+    }
+  }
+
+  // Family milestones.
+  if (familyStats && familyStats.unit_count > 0) {
+    // Find earliest family formation tick.
+    const earliestFamily = familyStats.families.reduce<{ name: string; tick: number } | null>(
+      (earliest, f) =>
+        earliest === null || f.formed_at_tick < earliest.tick
+          ? { name: f.name, tick: f.formed_at_tick }
+          : earliest,
+      null,
+    );
+
+    if (earliestFamily) {
+      milestones.push({
+        tick: earliestFamily.tick,
+        category: "family",
+        label: `First family formed: ${earliestFamily.name}`,
+        description: `${familyStats.unit_count} family unit${familyStats.unit_count === 1 ? "" : "s"} now exist`,
+      });
+    }
+
+    if (familyStats.marriage_count > 0) {
+      // Approximate first marriage tick from earliest family.
+      const marriageTick = earliestFamily?.tick ?? 0;
+      milestones.push({
+        tick: marriageTick,
+        category: "family",
+        label: "First marriage",
+        description: `${familyStats.marriage_count} marriage${familyStats.marriage_count === 1 ? "" : "s"} recorded`,
+      });
+    }
+
+    if (familyStats.longest_lineage > 1) {
+      milestones.push({
+        tick: 0,
+        category: "family",
+        label: `Lineage depth: ${familyStats.longest_lineage} generations`,
+        description: `Multi-generational families have emerged`,
+      });
+    }
+  }
+
+  // Economy milestones.
+  if (economicClassification && economicClassification.model_type !== "Subsistence") {
+    milestones.push({
+      tick: 0,
+      category: "economy",
+      label: `Economy classified: ${economicClassification.model_type}`,
+      description: `Trade volume: ${formatNumber(economicClassification.trade_volume)} across ${economicClassification.market_locations.length} market${economicClassification.market_locations.length === 1 ? "" : "s"}`,
+    });
+
+    if (economicClassification.currency_resource) {
+      milestones.push({
+        tick: 0,
+        category: "economy",
+        label: `Currency detected: ${formatResourceName(economicClassification.currency_resource)}`,
+        description: `${economicClassification.currency_adoption_pct.toFixed(1)}% adoption rate`,
+      });
+    }
+  }
+
+  // Crime milestones.
+  if (crimeStats && crimeStats.crime_rate > 0) {
+    milestones.push({
+      tick: 0,
+      category: "crime",
+      label: "Crime detected in society",
+      description: `Crime rate: ${(crimeStats.crime_rate * 100).toFixed(1)}% with ${crimeStats.common_crimes.length} crime type${crimeStats.common_crimes.length === 1 ? "" : "s"}`,
+    });
+
+    if (crimeStats.justice_type !== "None") {
+      milestones.push({
+        tick: 0,
+        category: "crime",
+        label: `Justice system: ${crimeStats.justice_type}`,
+        description: `Detection rate: ${Math.round(crimeStats.detection_rate * 100)}%, Punishment rate: ${Math.round(crimeStats.punishment_rate * 100)}%`,
+      });
+    }
+  }
+
+  // Sort by tick ascending, then by category for stable order within same tick.
+  milestones.sort((a, b) => {
+    if (a.tick !== b.tick) return a.tick - b.tick;
+    return a.category.localeCompare(b.category);
+  });
+
+  return milestones;
+}
+
+/**
+ * Civilization Timeline -- cross-tab view showing the arc of emergent civilization.
+ *
+ * Displays a chronological list of milestone events from all social construct
+ * categories: beliefs, governance, family, economy, and crime.
+ */
+function CivilizationTimeline({ milestones }: { milestones: CivilizationMilestone[] }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  // Category summary counts.
+  const categoryCounts = useMemo(() => {
+    const counts: Record<CivilizationMilestoneCategory, number> = {
+      belief: 0,
+      governance: 0,
+      family: 0,
+      economy: 0,
+      crime: 0,
+    };
+    for (const m of milestones) {
+      counts[m.category] += 1;
+    }
+    return counts;
+  }, [milestones]);
+
+  // D3 timeline visualization.
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
+
+    if (milestones.length === 0) return;
+
+    const width = 600;
+    const rowHeight = 20;
+    const height = Math.max(80, milestones.length * rowHeight + 40);
+    const margin = { top: 20, right: 20, bottom: 10, left: 70 };
+
+    svg.attr("viewBox", `0 0 ${width} ${height}`);
+    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Draw vertical timeline axis line.
+    g.append("line")
+      .attr("x1", 0)
+      .attr("y1", 0)
+      .attr("x2", 0)
+      .attr("y2", milestones.length * rowHeight)
+      .attr("stroke", "var(--color-border-primary)")
+      .attr("stroke-width", 2);
+
+    // Category colors for D3 markers.
+    const categoryColors: Record<CivilizationMilestoneCategory, string> = {
+      belief: "var(--color-lifecycle)",
+      governance: "var(--color-info)",
+      family: "var(--color-success)",
+      economy: "var(--color-warning)",
+      crime: "var(--color-danger)",
+    };
+
+    // Draw milestone markers.
+    milestones.forEach((m, i) => {
+      const y = i * rowHeight + rowHeight / 2;
+
+      // Dot on the timeline.
+      g.append("circle")
+        .attr("cx", 0)
+        .attr("cy", y)
+        .attr("r", 5)
+        .attr("fill", categoryColors[m.category])
+        .attr("fill-opacity", 0.3)
+        .attr("stroke", categoryColors[m.category])
+        .attr("stroke-width", 1.5);
+
+      // Tick label.
+      g.append("text")
+        .attr("x", -8)
+        .attr("y", y)
+        .attr("dy", "0.35em")
+        .attr("text-anchor", "end")
+        .attr("fill", "var(--color-text-muted)")
+        .attr("font-size", "9px")
+        .attr("font-family", "var(--font-mono)")
+        .text(m.tick > 0 ? `T${m.tick}` : "");
+
+      // Connecting line from dot to label.
+      g.append("line")
+        .attr("x1", 8)
+        .attr("y1", y)
+        .attr("x2", 16)
+        .attr("y2", y)
+        .attr("stroke", "var(--color-border-secondary)")
+        .attr("stroke-width", 1);
+
+      // Milestone label.
+      g.append("text")
+        .attr("x", 20)
+        .attr("y", y)
+        .attr("dy", "0.35em")
+        .attr("fill", "var(--color-text-primary)")
+        .attr("font-size", "10px")
+        .attr("font-family", "var(--font-mono)")
+        .text(m.label);
+    });
+  }, [milestones]);
+
+  return (
+    <>
+      {/* Category summary */}
+      <div className="flex gap-sm mb-md">
+        <div className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+          <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
+            Milestones
+          </div>
+          <div className="text-lg font-bold text-text-accent font-mono">{milestones.length}</div>
+        </div>
+        {(["belief", "governance", "family", "economy", "crime"] as const).map((cat) => (
+          <div key={cat} className="flex-1 bg-bg-tertiary border border-border-primary rounded-sm px-md py-sm text-center">
+            <div className="text-2xs text-text-secondary font-mono uppercase tracking-wide">
+              {milestoneCategoryLabel(cat)}
+            </div>
+            <div className="text-lg font-bold text-text-primary font-mono">{categoryCounts[cat]}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* D3 timeline visualization */}
+      <div className="font-mono text-2xs text-text-muted uppercase tracking-widest mt-md mb-sm pb-xs border-b border-border-secondary">
+        Civilization Arc
+      </div>
+      <div className="chart-container mb-md">
+        <svg ref={svgRef} />
+      </div>
+
+      {/* Detailed milestone list */}
+      <div className="font-mono text-2xs text-text-muted uppercase tracking-widest mt-md mb-sm pb-xs border-b border-border-secondary">
+        Milestone Log
+      </div>
+      {milestones.map((m, i) => (
+        <div
+          key={`${m.tick}-${m.category}-${i}`}
+          className="flex gap-sm px-md py-sm border-b border-border-secondary text-xs"
+        >
+          <span className="font-mono text-text-muted min-w-[60px]">
+            {m.tick > 0 ? formatTick(m.tick) : "--"}
+          </span>
+          <span
+            className={cn(
+              "inline-flex items-center px-1.5 rounded-[10px] text-2xs font-mono font-semibold min-w-[80px] justify-center",
+              milestoneCategoryClasses(m.category),
+            )}
+          >
+            {milestoneCategoryLabel(m.category)}
+          </span>
+          <div className="flex-1">
+            <div className="text-text-primary">{m.label}</div>
+            <div className="text-text-muted text-2xs mt-0.5">{m.description}</div>
+          </div>
+        </div>
+      ))}
+    </>
   );
 }

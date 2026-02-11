@@ -21,7 +21,7 @@ use crate::resource;
 /// per-tick data: current occupants and structures. Resource nodes live
 /// inside `Location.base_resources` and are mutated in place during
 /// regeneration and gathering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LocationState {
     /// The canonical location data (identity + resource definitions).
     pub location: Location,

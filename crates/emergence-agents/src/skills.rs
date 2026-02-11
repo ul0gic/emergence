@@ -655,6 +655,7 @@ mod tests {
             energy: 80,
             health: 100,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick: 0,
             location_id: emergence_types::LocationId::new(),

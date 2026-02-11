@@ -18,7 +18,6 @@ import type { ConnectionStatus } from "../hooks/useWebSocket.ts";
 import { cn } from "../lib/utils.ts";
 import type { InjectedEventType, OperatorStatus } from "../types/generated/index.ts";
 import { formatNumber } from "../utils/format.ts";
-import { MOCK_OPERATOR_STATUS } from "../utils/mockData.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,7 +49,6 @@ const REGIONS = ["Highlands", "Central Valley", "Coastal Lowlands"];
 
 interface OperatorControlsProps {
   connectionStatus: ConnectionStatus;
-  useMock?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,10 +112,9 @@ function getConnectionDotClasses(connectionStatus: ConnectionStatus): string {
 
 export default function OperatorControls({
   connectionStatus,
-  useMock = false,
 }: OperatorControlsProps) {
   const { data: liveStatus } = useOperatorStatus();
-  const status = useMock ? MOCK_OPERATOR_STATUS : liveStatus;
+  const status = liveStatus;
 
   const { execute: pause, loading: pauseLoading } = usePauseSimulation();
   const { execute: resume, loading: resumeLoading } = useResumeSimulation();

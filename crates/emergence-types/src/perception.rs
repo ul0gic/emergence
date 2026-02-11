@@ -13,7 +13,7 @@ use ts_rs::TS;
 
 use crate::enums::{Resource, Season, TimeOfDay, Weather};
 use crate::ids::AgentId;
-use crate::structs::{VisibleMessage, VisibleStructure};
+use crate::structs::{Sex, VisibleMessage, VisibleStructure};
 
 // ---------------------------------------------------------------------------
 // 8.1 Perception
@@ -62,6 +62,8 @@ pub struct SelfState {
     pub id: AgentId,
     /// The agent's name.
     pub name: String,
+    /// The agent's biological sex.
+    pub sex: Sex,
     /// Current age in ticks.
     pub age: u32,
     /// Current energy (0--100).
@@ -70,6 +72,8 @@ pub struct SelfState {
     pub health: u32,
     /// Current hunger (0--100).
     pub hunger: u32,
+    /// Current thirst (0--100).
+    pub thirst: u32,
     /// Name of the agent's current location.
     pub location_name: String,
     /// Inventory contents.
@@ -112,6 +116,8 @@ pub struct Surroundings {
 pub struct VisibleAgent {
     /// The other agent's name.
     pub name: String,
+    /// The other agent's biological sex.
+    pub sex: Sex,
     /// Relationship description (e.g. "friendly (0.7)").
     pub relationship: String,
     /// What the agent appears to be doing.

@@ -71,9 +71,26 @@ pub fn apply_vital_tick(
         state.hunger = 100;
     }
 
+    // 3b. Increase thirst
+    state.thirst = state
+        .thirst
+        .checked_add(config.thirst_per_tick)
+        .ok_or_else(|| AgentError::ArithmeticOverflow {
+            context: String::from("thirst increase overflow"),
+        })?;
+    // Clamp thirst to 100 max (the stat range)
+    if state.thirst > 100 {
+        state.thirst = 100;
+    }
+
     // 4. Apply starvation damage when hunger >= threshold
     if state.hunger >= config.starvation_threshold {
         state.health = state.health.saturating_sub(config.starvation_damage);
+    }
+
+    // 4b. Apply dehydration damage when thirst >= threshold
+    if state.thirst >= config.dehydration_threshold {
+        state.health = state.health.saturating_sub(config.dehydration_health_loss);
     }
 
     // 5. Clamp energy to age-based maximum
@@ -162,6 +179,40 @@ pub fn apply_rest(
     Ok(())
 }
 
+/// Apply drinking effects: reduce thirst and restore minor energy.
+///
+/// `thirst_reduction` is the thirst value removed by the water.
+/// `energy_gain` is the energy value restored.
+/// Both are clamped to valid ranges.
+pub fn apply_drink(
+    state: &mut AgentState,
+    config: &VitalsConfig,
+    thirst_reduction: u32,
+    energy_gain: u32,
+) -> Result<(), AgentError> {
+    // Reduce thirst (floor at 0)
+    state.thirst = state.thirst.saturating_sub(thirst_reduction);
+
+    // Add energy
+    state.energy = state.energy.checked_add(energy_gain).ok_or_else(|| {
+        AgentError::ArithmeticOverflow {
+            context: String::from("energy gain overflow in drink"),
+        }
+    })?;
+
+    // Clamp energy to age-based cap
+    let max_energy = config
+        .max_energy_for_age(state.age)
+        .ok_or_else(|| AgentError::ArithmeticOverflow {
+            context: String::from("max_energy_for_age overflow in drink"),
+        })?;
+    if state.energy > max_energy {
+        state.energy = max_energy;
+    }
+
+    Ok(())
+}
+
 /// Apply eating effects: reduce hunger and restore energy.
 ///
 /// `hunger_reduction` is the hunger value removed by the food.
@@ -211,6 +262,7 @@ mod tests {
             energy: 80,
             health: 100,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick: 0,
             location_id: LocationId::new(),

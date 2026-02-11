@@ -376,25 +376,10 @@ pub fn execute_drink(
         resource_changes.insert(Resource::Water, -1);
     }
 
-    // Drinking provides minor hunger reduction (5) and energy gain (5)
-    let hunger_reduction: u32 = 5;
+    // Drinking reduces thirst fully and provides minor energy gain (5)
+    let thirst_reduction: u32 = 100;
     let energy_gain: u32 = 5;
-    agent.hunger = agent.hunger.saturating_sub(hunger_reduction);
-    agent.energy = agent.energy.checked_add(energy_gain).ok_or_else(|| {
-        AgentError::ArithmeticOverflow {
-            context: String::from("energy gain overflow in drink"),
-        }
-    })?;
-
-    // Clamp energy to age-based max
-    let max_energy = config
-        .max_energy_for_age(agent.age)
-        .ok_or_else(|| AgentError::ArithmeticOverflow {
-            context: String::from("max_energy_for_age overflow in drink"),
-        })?;
-    if agent.energy > max_energy {
-        agent.energy = max_energy;
-    }
+    vitals::apply_drink(agent, config, thirst_reduction, energy_gain)?;
 
     vitals::apply_energy_cost(agent, costs::energy_cost(ActionType::Drink));
 
@@ -405,7 +390,7 @@ pub fn execute_drink(
             skill_xp: BTreeMap::new(),
             details: serde_json::json!({
                 "source": if location_deltas.is_empty() { "inventory" } else { "location" },
-                "hunger_reduction": hunger_reduction,
+                "thirst_reduction": thirst_reduction,
                 "energy_gain": energy_gain,
             }),
         },
@@ -2201,6 +2186,7 @@ mod tests {
             energy,
             health: 100,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick: 0,
             location_id: LocationId::new(),
@@ -2301,6 +2287,7 @@ mod tests {
     fn drink_from_location() {
         let mut agent = make_agent(50);
         agent.hunger = 20;
+        agent.thirst = 60;
         let config = VitalsConfig::default();
         let mut ctx = make_exec_ctx();
 
@@ -2309,7 +2296,9 @@ mod tests {
         let hr = result.unwrap();
         // Drank from location, not inventory
         assert_eq!(hr.location_resource_deltas.get(&Resource::Water).copied(), Some(1));
-        assert_eq!(agent.hunger, 15); // 20 - 5
+        // Drinking reduces thirst, not hunger
+        assert_eq!(agent.thirst, 0); // 60 - 100, clamped to 0
+        assert_eq!(agent.hunger, 20); // unchanged
         assert_eq!(agent.energy, 55); // 50 + 5
     }
 

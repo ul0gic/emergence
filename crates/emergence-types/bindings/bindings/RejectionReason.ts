@@ -3,4 +3,4 @@
 /**
  * The reason an agent's action was rejected by the World Engine.
  */
-export type RejectionReason = "InvalidAction" | "InsufficientEnergy" | "WrongLocation" | "InsufficientResources" | "UnavailableTarget" | "UnknownAction" | "ConflictLost" | "CapacityExceeded" | "InvalidTarget" | "PermissionDenied" | "Timeout" | "Infeasible" | "NeedsEvaluation";
+export type RejectionReason = "InvalidAction" | "InsufficientEnergy" | "WrongLocation" | "InsufficientResources" | "UnavailableTarget" | "UnknownAction" | "ConflictLost" | "CapacityExceeded" | "InvalidTarget" | "PermissionDenied" | "Timeout" | "Infeasible" | "NeedsEvaluation" | "SameSexReproduction";

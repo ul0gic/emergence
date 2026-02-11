@@ -10,9 +10,20 @@ use std::sync::Arc;
 
 use emergence_core::operator::OperatorState;
 use emergence_types::{
-    Agent, AgentId, AgentState, Era, Event, Location, LocationId, Season, Weather, WorldSnapshot,
+    Agent, AgentId, AgentState, DecisionRecord, Era, Event, Location, LocationId, Route, RouteId,
+    Season, Weather, WorldSnapshot,
 };
 use tokio::sync::{broadcast, RwLock};
+
+use crate::alerts::AlertStore;
+
+/// Maximum number of events to keep in the in-memory snapshot.
+/// Older events are drained when this cap is exceeded.
+pub const MAX_EVENTS: usize = 1000;
+
+/// Maximum number of decision records to keep in the in-memory snapshot.
+/// Older records are drained when this cap is exceeded.
+pub const MAX_DECISIONS: usize = 2000;
 
 /// Capacity of the broadcast channel for tick summaries.
 ///
@@ -53,8 +64,12 @@ pub struct SimulationSnapshot {
     pub agent_states: BTreeMap<AgentId, AgentState>,
     /// Location definitions keyed by location ID.
     pub locations: BTreeMap<LocationId, Location>,
+    /// Route definitions keyed by route ID.
+    pub routes: BTreeMap<RouteId, Route>,
     /// Event log (most recent first, capped for memory).
     pub events: Vec<Event>,
+    /// Recent decision records from the agent runner.
+    pub decisions: Vec<DecisionRecord>,
     /// The latest world snapshot.
     pub world_snapshot: Option<WorldSnapshot>,
     /// Current tick number.
@@ -73,7 +88,9 @@ impl Default for SimulationSnapshot {
             agents: BTreeMap::new(),
             agent_states: BTreeMap::new(),
             locations: BTreeMap::new(),
+            routes: BTreeMap::new(),
             events: Vec::new(),
+            decisions: Vec::new(),
             world_snapshot: None,
             current_tick: 0,
             era: Era::Primitive,
@@ -97,6 +114,8 @@ pub struct AppState {
     pub snapshot: Arc<RwLock<SimulationSnapshot>>,
     /// Shared operator control state (present when the simulation is running).
     pub operator_state: Option<Arc<OperatorState>>,
+    /// In-memory alert store for containment and monitoring alerts.
+    pub alert_store: Arc<RwLock<AlertStore>>,
 }
 
 impl AppState {
@@ -107,6 +126,7 @@ impl AppState {
             tx,
             snapshot: Arc::new(RwLock::new(SimulationSnapshot::default())),
             operator_state: None,
+            alert_store: Arc::new(RwLock::new(AlertStore::new())),
         }
     }
 
@@ -117,6 +137,7 @@ impl AppState {
             tx,
             snapshot: Arc::new(RwLock::new(SimulationSnapshot::default())),
             operator_state: Some(operator),
+            alert_store: Arc::new(RwLock::new(AlertStore::new())),
         }
     }
 

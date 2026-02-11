@@ -48,4 +48,18 @@
     scrollbar-width: thin;
     scrollbar-color: var(--color-border-primary) transparent;
   }
+
+  /* Light mode overrides — toggled by .light class on #root */
+  .light {
+    --color-bg-primary: #ffffff;
+    --color-bg-secondary: #f6f8fa;
+    --color-bg-tertiary: #eaeef2;
+    --color-bg-elevated: #d0d7de;
+    --color-border-primary: #d0d7de;
+    --color-border-secondary: #e6e8eb;
+    --color-text-primary: #1f2328;
+    --color-text-secondary: #656d76;
+    --color-text-muted: #8c959f;
+    --color-text-accent: #0969da;
+  }
 }

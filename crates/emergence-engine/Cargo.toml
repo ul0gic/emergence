@@ -1,0 +1,36 @@
+[package]
+name = "emergence-engine"
+description = "World Engine binary for the Emergence simulation — tick cycle, agent spawner, NATS decision source"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "emergence-engine"
+path = "src/main.rs"
+
+[dependencies]
+emergence-core = { path = "../emergence-core" }
+emergence-types = { path = "../emergence-types" }
+emergence-agents = { path = "../emergence-agents" }
+emergence-observer = { path = "../emergence-observer" }
+emergence-world = { path = "../emergence-world" }
+async-nats = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = "0.0.12"
+thiserror = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

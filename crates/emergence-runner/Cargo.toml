@@ -29,6 +29,9 @@ minijinja = { workspace = true }
 async-nats = { workspace = true }
 futures = { workspace = true }
 
+# Financial precision for cost tracking (no floating-point)
+rust_decimal = { workspace = true }
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -17,6 +17,9 @@ use emergence_types::{
 use chrono::Utc;
 use tracing::info;
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 // ---------------------------------------------------------------------------
 // Thresholds (kept as constants so operators can find and tune them)
 // ---------------------------------------------------------------------------
@@ -24,23 +27,70 @@ use tracing::info;
 /// Health threshold below which medicine use is critical.
 const CRITICAL_HEALTH: u32 = 20;
 
+/// Thirst threshold for "dying of thirst" -- drink immediately.
+const CRITICAL_THIRST: u32 = 80;
+
 /// Hunger threshold for "starving" -- highest priority eating.
 const STARVING_HUNGER: u32 = 80;
-
-/// Hunger threshold for "dehydrated" -- triggers drinking.
-const DEHYDRATED_HUNGER: u32 = 60;
 
 /// Energy threshold for "exhausted" -- must rest immediately.
 const EXHAUSTED_ENERGY: u32 = 10;
 
+/// Thirst threshold for "thirsty" -- should drink when convenient.
+const THIRSTY: u32 = 50;
+
 /// Hunger threshold for "very hungry" -- will eat if food available.
 const VERY_HUNGRY: u32 = 50;
+
+/// Hunger threshold for proactive food gathering.
+const GATHER_FOOD_HUNGER: u32 = 60;
 
 /// Energy threshold for "low energy" -- will rest if no urgent needs.
 const LOW_ENERGY: u32 = 25;
 
 /// Energy threshold below which night cycle auto-rest activates.
 const NIGHT_REST_ENERGY: u32 = 50;
+
+/// Number of consecutive identical rule firings before escalating to the LLM.
+const LOOP_DETECTION_THRESHOLD: u32 = 10;
+
+// ---------------------------------------------------------------------------
+// Loop detection state
+// ---------------------------------------------------------------------------
+
+/// Tracks per-agent loop detection: (last rule name, consecutive count).
+static LOOP_TRACKER: Mutex<Option<HashMap<AgentId, (String, u32)>>> = Mutex::new(None);
+
+/// Record a rule firing for an agent. Returns `true` if the same rule has
+/// fired `LOOP_DETECTION_THRESHOLD` or more times consecutively, meaning
+/// the caller should skip the rule engine and escalate to the LLM.
+fn check_loop_detection(agent_id: AgentId, rule_name: &str) -> bool {
+    let Ok(mut guard) = LOOP_TRACKER.lock() else {
+        return false; // poisoned mutex -- do not block on it
+    };
+    let tracker = guard.get_or_insert_with(HashMap::new);
+
+    let entry = tracker.entry(agent_id).or_insert_with(|| (String::new(), 0));
+    if entry.0 == rule_name {
+        entry.1 = entry.1.saturating_add(1);
+    } else {
+        entry.0 = String::from(rule_name);
+        entry.1 = 1;
+    }
+
+    entry.1 >= LOOP_DETECTION_THRESHOLD
+}
+
+/// Reset the loop counter for an agent (called when the LLM makes a decision
+/// or a different rule fires).
+pub fn reset_loop_detection(agent_id: AgentId) {
+    let Ok(mut guard) = LOOP_TRACKER.lock() else {
+        return;
+    };
+    if let Some(tracker) = guard.as_mut() {
+        tracker.remove(&agent_id);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Decision source tagging
@@ -141,6 +191,17 @@ fn at_water_source(perception: &Perception) -> bool {
         .contains_key(&Resource::Water)
 }
 
+/// Check whether there is gatherable food at the agent's current location.
+///
+/// Returns the first food resource visible at the location, preferring
+/// better food types according to [`FOOD_PRIORITY`].
+fn food_at_location(perception: &Perception) -> Option<Resource> {
+    FOOD_PRIORITY
+        .iter()
+        .find(|&&food| perception.surroundings.visible_resources.contains_key(&food))
+        .copied()
+}
+
 /// Check whether the given action name is in the agent's available actions list.
 fn action_available(perception: &Perception, action_name: &str) -> bool {
     let lower = action_name.to_lowercase();
@@ -156,19 +217,50 @@ fn action_available(perception: &Perception, action_name: &str) -> bool {
 
 /// Attempts to determine an action without calling the LLM.
 ///
-/// Returns `Some(ActionRequest)` if an obvious action exists, `None` if the
-/// LLM is needed for a non-trivial decision. Rules are evaluated in strict
-/// priority order (highest urgency first).
+/// Returns `Some((rule_name, ActionRequest))` if an obvious action exists,
+/// `None` if the LLM is needed for a non-trivial decision. Rules are
+/// evaluated in strict priority order (highest urgency first).
+///
+/// Loop detection: if the same rule fires `LOOP_DETECTION_THRESHOLD` times
+/// in a row for the same agent, returns `None` to escalate to the LLM.
 ///
 /// # Rules (in priority order)
 ///
 /// 1. **Critical health**: health < 20 and has medicine -- use medicine (eat)
-/// 2. **Starving**: hunger >= 80 and has food -- eat best food
-/// 3. **Dehydrated**: hunger >= 60 and at water source or has water -- drink
+/// 2. **Dying of thirst**: thirst >= 80 and water available -- drink
+/// 3. **Starving**: hunger >= 80 and has food -- eat best food
 /// 4. **Exhausted**: energy <= 10 -- rest
-/// 5. **Very hungry**: hunger >= 50 and has food -- eat
-/// 6. **Low energy**: energy <= 25 and no urgent needs -- rest
+/// 5. **Thirsty**: thirst >= 50 and water available -- drink
+/// 6. **Very hungry**: hunger >= 50 and has food -- eat
+/// 7. **Very hungry, no food, food at location**: hunger >= 60 -- gather food
+/// 8. **Low energy**: energy <= 25 and no urgent needs -- rest
 pub fn try_routine_action(perception: &Perception) -> Option<ActionRequest> {
+    let agent_id = perception.self_state.id;
+
+    // Try to find a matching rule, then apply loop detection.
+    let candidate = try_routine_action_inner(perception);
+
+    if let Some((rule_name, action)) = candidate {
+        // Loop detection: if this rule has fired too many times, escalate.
+        if check_loop_detection(agent_id, &rule_name) {
+            info!(
+                agent_id = %agent_id,
+                rule = rule_name,
+                "rule engine: loop detected ({LOOP_DETECTION_THRESHOLD}+ consecutive), escalating to LLM"
+            );
+            return None;
+        }
+        return Some(action);
+    }
+
+    // No routine action applies -- reset loop counter and let LLM decide.
+    reset_loop_detection(agent_id);
+    None
+}
+
+/// Inner implementation of routine action matching. Returns the rule name
+/// and action request if a rule matches, or `None` if no rule applies.
+fn try_routine_action_inner(perception: &Perception) -> Option<(String, ActionRequest)> {
     let state = &perception.self_state;
     let inventory = &state.inventory;
     let agent_id = state.id;
@@ -185,10 +277,24 @@ pub fn try_routine_action(perception: &Perception) -> Option<ActionRequest> {
             rule = "critical_health",
             "rule engine: using medicine (health critical)"
         );
-        return Some(make_eat_action(agent_id, tick, Resource::Medicine));
+        return Some(("critical_health".to_owned(), make_eat_action(agent_id, tick, Resource::Medicine)));
     }
 
-    // Rule 2: Starving -- eat best food
+    // Rule 2: Dying of thirst -- drink immediately
+    if state.thirst >= CRITICAL_THIRST
+        && (at_water_source(perception) || has_water(inventory))
+        && action_available(perception, "drink")
+    {
+        info!(
+            agent_id = %agent_id,
+            thirst = state.thirst,
+            rule = "critical_thirst",
+            "rule engine: drinking (dying of thirst)"
+        );
+        return Some(("critical_thirst".to_owned(), make_drink_action(agent_id, tick)));
+    }
+
+    // Rule 3: Starving -- eat best food
     if state.hunger >= STARVING_HUNGER
         && action_available(perception, "eat")
         && let Some(food) = best_food_in_inventory(inventory)
@@ -200,21 +306,7 @@ pub fn try_routine_action(perception: &Perception) -> Option<ActionRequest> {
             rule = "starving",
             "rule engine: eating (starving)"
         );
-        return Some(make_eat_action(agent_id, tick, food));
-    }
-
-    // Rule 3: Dehydrated -- drink
-    if state.hunger >= DEHYDRATED_HUNGER
-        && (at_water_source(perception) || has_water(inventory))
-        && action_available(perception, "drink")
-    {
-        info!(
-            agent_id = %agent_id,
-            hunger = state.hunger,
-            rule = "dehydrated",
-            "rule engine: drinking (dehydrated)"
-        );
-        return Some(make_drink_action(agent_id, tick));
+        return Some(("starving".to_owned(), make_eat_action(agent_id, tick, food)));
     }
 
     // Rule 4: Exhausted -- rest
@@ -225,10 +317,24 @@ pub fn try_routine_action(perception: &Perception) -> Option<ActionRequest> {
             rule = "exhausted",
             "rule engine: resting (exhausted)"
         );
-        return Some(make_rest_action(agent_id, tick));
+        return Some(("exhausted".to_owned(), make_rest_action(agent_id, tick)));
     }
 
-    // Rule 5: Very hungry -- eat if food available
+    // Rule 5: Thirsty -- drink when convenient
+    if state.thirst >= THIRSTY
+        && (at_water_source(perception) || has_water(inventory))
+        && action_available(perception, "drink")
+    {
+        info!(
+            agent_id = %agent_id,
+            thirst = state.thirst,
+            rule = "thirsty",
+            "rule engine: drinking (thirsty)"
+        );
+        return Some(("thirsty".to_owned(), make_drink_action(agent_id, tick)));
+    }
+
+    // Rule 6: Very hungry -- eat if food available
     if state.hunger >= VERY_HUNGRY
         && action_available(perception, "eat")
         && let Some(food) = best_food_in_inventory(inventory)
@@ -240,10 +346,26 @@ pub fn try_routine_action(perception: &Perception) -> Option<ActionRequest> {
             rule = "very_hungry",
             "rule engine: eating (very hungry)"
         );
-        return Some(make_eat_action(agent_id, tick, food));
+        return Some(("very_hungry".to_owned(), make_eat_action(agent_id, tick, food)));
     }
 
-    // Rule 6: Low energy -- rest if no urgent survival needs
+    // Rule 7: Very hungry but no food -- gather food if available at location
+    if state.hunger >= GATHER_FOOD_HUNGER
+        && best_food_in_inventory(inventory).is_none()
+        && action_available(perception, "gather")
+        && let Some(food) = food_at_location(perception)
+    {
+        info!(
+            agent_id = %agent_id,
+            hunger = state.hunger,
+            food = ?food,
+            rule = "gather_food",
+            "rule engine: gathering food (hungry, no food in inventory)"
+        );
+        return Some(("gather_food".to_owned(), make_gather_action(agent_id, tick, food)));
+    }
+
+    // Rule 8: Low energy -- rest if no urgent survival needs
     if state.energy <= LOW_ENERGY && action_available(perception, "rest") {
         info!(
             agent_id = %agent_id,
@@ -251,7 +373,7 @@ pub fn try_routine_action(perception: &Perception) -> Option<ActionRequest> {
             rule = "low_energy",
             "rule engine: resting (low energy)"
         );
-        return Some(make_rest_action(agent_id, tick));
+        return Some(("low_energy".to_owned(), make_rest_action(agent_id, tick)));
     }
 
     // No routine action applies -- LLM is needed.
@@ -336,6 +458,17 @@ fn make_drink_action(agent_id: AgentId, tick: u64) -> ActionRequest {
     }
 }
 
+/// Build a `Gather` action request.
+fn make_gather_action(agent_id: AgentId, tick: u64, resource: Resource) -> ActionRequest {
+    ActionRequest {
+        agent_id,
+        tick,
+        action_type: ActionType::Gather,
+        parameters: ActionParameters::Gather { resource },
+        submitted_at: Utc::now(),
+    }
+}
+
 /// Build a `Rest` action request.
 fn make_rest_action(agent_id: AgentId, tick: u64) -> ActionRequest {
     ActionRequest {
@@ -357,14 +490,32 @@ mod tests {
     use std::collections::BTreeMap;
 
     use emergence_types::{
-        Season, SelfState, Surroundings, Weather,
+        Season, SelfState, Sex, Surroundings, Weather,
     };
 
     /// Build a minimal perception with customizable vitals and inventory.
+    /// `thirst` defaults to 0 for backward-compatible tests.
     fn make_perception(
         energy: u32,
         health: u32,
         hunger: u32,
+        inventory: BTreeMap<Resource, u32>,
+        time_of_day: TimeOfDay,
+        visible_resources: BTreeMap<Resource, String>,
+        available_actions: Vec<String>,
+    ) -> Perception {
+        make_perception_with_thirst(
+            energy, health, hunger, 0,
+            inventory, time_of_day, visible_resources, available_actions,
+        )
+    }
+
+    /// Build a perception with explicit thirst control.
+    fn make_perception_with_thirst(
+        energy: u32,
+        health: u32,
+        hunger: u32,
+        thirst: u32,
         inventory: BTreeMap<Resource, u32>,
         time_of_day: TimeOfDay,
         visible_resources: BTreeMap<Resource, String>,
@@ -378,10 +529,12 @@ mod tests {
             self_state: SelfState {
                 id: AgentId::new(),
                 name: "TestAgent".to_owned(),
+                sex: Sex::Male,
                 age: 10,
                 energy,
                 health,
                 hunger,
+                thirst,
                 location_name: "Forest".to_owned(),
                 inventory,
                 carry_load: "5/50".to_owned(),
@@ -447,7 +600,55 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Rule 2: Starving
+    // Rule 2: Dying of thirst (critical thirst)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn critical_thirst_drinks_at_water_source() {
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::Water, "plentiful".to_owned());
+        let p = make_perception_with_thirst(
+            50, 80, 30, 85,
+            BTreeMap::new(), TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        assert_eq!(action.action_type, ActionType::Drink);
+    }
+
+    #[test]
+    fn critical_thirst_drinks_from_inventory() {
+        let mut inv = BTreeMap::new();
+        inv.insert(Resource::Water, 3);
+        let p = make_perception_with_thirst(
+            50, 80, 30, 85,
+            inv, TimeOfDay::Morning,
+            BTreeMap::new(), default_actions(),
+        );
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        assert_eq!(action.action_type, ActionType::Drink);
+    }
+
+    #[test]
+    fn critical_thirst_no_water_does_not_drink() {
+        let p = make_perception_with_thirst(
+            50, 80, 30, 85,
+            BTreeMap::new(), TimeOfDay::Morning,
+            BTreeMap::new(), default_actions(),
+        );
+        // Critical thirst but no water source and no water in inventory
+        let result = try_routine_action(&p);
+        // Falls through: not starving (hunger 30), not exhausted (energy 50),
+        // not thirsty with water, not very hungry, not gather food (hunger < 60)
+        assert!(result.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Rule 3: Starving
     // -----------------------------------------------------------------------
 
     #[test]
@@ -478,23 +679,24 @@ mod tests {
         );
         // Starving but no food -- falls through to lower rules
         let result = try_routine_action(&p);
-        // No food, but hunger >= 60 and no water -> falls to exhausted check (energy 50 > 10)
-        // Then very hungry check (hunger 85 >= 50 but no food)
-        // Then low energy check (energy 50 > 25)
+        // No food, thirst 0 (no thirst rules), not exhausted (energy 50 > 10),
+        // not very hungry with food, gather food might trigger (hunger 85 >= 60,
+        // no food in inventory, but no food at location either) -> low energy (50 > 25)
         // Returns None
         assert!(result.is_none());
     }
 
     // -----------------------------------------------------------------------
-    // Rule 3: Dehydrated
+    // Rule 5: Thirsty (moderate)
     // -----------------------------------------------------------------------
 
     #[test]
-    fn dehydrated_drinks_at_water_source() {
+    fn thirsty_drinks_at_water_source() {
         let mut vis = BTreeMap::new();
         vis.insert(Resource::Water, "plentiful".to_owned());
-        let p = make_perception(
-            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
+        let p = make_perception_with_thirst(
+            50, 80, 30, 55,
+            BTreeMap::new(), TimeOfDay::Morning,
             vis, default_actions(),
         );
         let result = try_routine_action(&p);
@@ -504,26 +706,13 @@ mod tests {
     }
 
     #[test]
-    fn dehydrated_drinks_from_inventory() {
-        let mut inv = BTreeMap::new();
-        inv.insert(Resource::Water, 3);
-        let p = make_perception(
-            50, 80, 65, inv, TimeOfDay::Morning,
+    fn thirsty_no_water_does_not_drink() {
+        let p = make_perception_with_thirst(
+            50, 80, 30, 55,
+            BTreeMap::new(), TimeOfDay::Morning,
             BTreeMap::new(), default_actions(),
         );
-        let result = try_routine_action(&p);
-        assert!(result.is_some());
-        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
-        assert_eq!(action.action_type, ActionType::Drink);
-    }
-
-    #[test]
-    fn dehydrated_no_water_does_not_drink() {
-        let p = make_perception(
-            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
-            BTreeMap::new(), default_actions(),
-        );
-        // Dehydrated but no water source and no water in inventory
+        // Thirsty but no water
         let result = try_routine_action(&p);
         assert!(result.is_none());
     }
@@ -630,7 +819,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Priority ordering: critical health > starving > dehydrated > exhausted
+    // Priority ordering: critical health > critical thirst > starving > exhausted
     // -----------------------------------------------------------------------
 
     #[test]
@@ -798,6 +987,7 @@ mod tests {
         );
         p.surroundings.agents_here.push(VisibleAgent {
             name: "Stranger".to_owned(),
+            sex: Sex::Male,
             relationship: "unknown".to_owned(),
             activity: "watching".to_owned(),
         });
@@ -894,5 +1084,129 @@ mod tests {
         assert_eq!(DecisionSource::Llm.as_str(), "llm");
         assert_eq!(DecisionSource::RuleEngine.as_str(), "rule_engine");
         assert_eq!(DecisionSource::NightCycle.as_str(), "night_cycle");
+    }
+
+    // -----------------------------------------------------------------------
+    // Rule 7: Gather food when hungry with no food in inventory
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gather_food_when_hungry_no_inventory() {
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::FoodBerry, "plentiful".to_owned());
+        let p = make_perception(
+            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        assert_eq!(action.action_type, ActionType::Gather);
+        assert!(matches!(
+            action.parameters,
+            ActionParameters::Gather { resource: Resource::FoodBerry }
+        ));
+    }
+
+    #[test]
+    fn no_gather_when_food_in_inventory() {
+        let mut inv = BTreeMap::new();
+        inv.insert(Resource::FoodBerry, 3);
+        let mut vis = BTreeMap::new();
+        vis.insert(Resource::FoodBerry, "plentiful".to_owned());
+        // Hunger 65, has food -> should eat (very_hungry rule), not gather
+        let p = make_perception(
+            50, 80, 65, inv, TimeOfDay::Morning,
+            vis, default_actions(),
+        );
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        assert_eq!(action.action_type, ActionType::Eat);
+    }
+
+    #[test]
+    fn no_gather_when_no_food_at_location() {
+        let p = make_perception(
+            50, 80, 65, BTreeMap::new(), TimeOfDay::Morning,
+            BTreeMap::new(), default_actions(),
+        );
+        // Hungry, no food in inventory, no food at location -> nothing to do
+        let result = try_routine_action(&p);
+        assert!(result.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Thirst-hunger independence: drinking does NOT affect hunger rule
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hungry_agent_eats_not_drinks() {
+        // High hunger, low thirst: should eat, not drink
+        let mut inv = BTreeMap::new();
+        inv.insert(Resource::FoodBerry, 3);
+        inv.insert(Resource::Water, 5);
+        let p = make_perception_with_thirst(
+            50, 80, 85, 10,
+            inv, TimeOfDay::Morning,
+            BTreeMap::new(), default_actions(),
+        );
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        assert_eq!(action.action_type, ActionType::Eat);
+    }
+
+    #[test]
+    fn thirsty_agent_drinks_not_eats() {
+        // Low hunger, high thirst: should drink, not eat
+        let mut inv = BTreeMap::new();
+        inv.insert(Resource::FoodBerry, 3);
+        inv.insert(Resource::Water, 5);
+        let p = make_perception_with_thirst(
+            50, 80, 10, 85,
+            inv, TimeOfDay::Morning,
+            BTreeMap::new(), default_actions(),
+        );
+        let result = try_routine_action(&p);
+        assert!(result.is_some());
+        let action = result.unwrap_or_else(|| make_rest_action(AgentId::new(), 0));
+        assert_eq!(action.action_type, ActionType::Drink);
+    }
+
+    // -----------------------------------------------------------------------
+    // Loop detection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn loop_detection_escalates_after_threshold() {
+        let agent_id = AgentId::new();
+        // Reset any prior state
+        reset_loop_detection(agent_id);
+
+        // Fire the same rule LOOP_DETECTION_THRESHOLD - 1 times: should not trigger
+        for _ in 0..LOOP_DETECTION_THRESHOLD.saturating_sub(1) {
+            assert!(!check_loop_detection(agent_id, "test_rule"));
+        }
+        // The Nth firing should trigger
+        assert!(check_loop_detection(agent_id, "test_rule"));
+
+        // Reset and verify it clears
+        reset_loop_detection(agent_id);
+        assert!(!check_loop_detection(agent_id, "test_rule"));
+    }
+
+    #[test]
+    fn loop_detection_resets_on_different_rule() {
+        let agent_id = AgentId::new();
+        reset_loop_detection(agent_id);
+
+        for _ in 0..5 {
+            assert!(!check_loop_detection(agent_id, "rule_a"));
+        }
+        // Switch to a different rule -- counter resets
+        assert!(!check_loop_detection(agent_id, "rule_b"));
+        // Clean up
+        reset_loop_detection(agent_id);
     }
 }

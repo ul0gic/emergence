@@ -34,7 +34,7 @@ interface UseWebSocketReturn {
 
 function getWsUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/ws/ticks`;
+  return `${protocol}//${window.location.hostname}:8080/ws/ticks`;
 }
 
 /**
@@ -140,6 +140,12 @@ export function useWebSocket(): UseWebSocketReturn {
         reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
+        // Nullify handlers before closing to prevent the stale onclose
+        // from triggering reconnection after StrictMode remount.
+        wsRef.current.onopen = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onmessage = null;
         wsRef.current.close();
         wsRef.current = null;
       }
@@ -151,8 +157,13 @@ export function useWebSocket(): UseWebSocketReturn {
     connectRef.current = () => {
       if (!mountedRef.current) return;
 
-      // Clean up existing connection.
+      // Clean up existing connection — nullify handlers first to
+      // prevent its onclose from scheduling another reconnection.
       if (wsRef.current) {
+        wsRef.current.onopen = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onmessage = null;
         wsRef.current.close();
         wsRef.current = null;
       }

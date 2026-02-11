@@ -5,9 +5,11 @@ You may choose exactly ONE of the following actions this tick:
 {% for action in available_actions %}- {{ action }}
 {% endfor %}
 
+**Not all actions listed below are always available. Only choose from the list above.**
+
 ## Response Instructions
 
-Choose one action from the list above and respond with valid JSON:
+Choose one action from your available list and respond with valid JSON:
 
 {
   "action_type": "ActionName",
@@ -16,16 +18,87 @@ Choose one action from the list above and respond with valid JSON:
   "goal_update": ["any new or updated goals"]
 }
 
+---
+
 ### Parameter Reference
 
-- Gather: {"resource": "ResourceName"} -- collect a resource at this location
-- Eat: {"food_type": "FoodResourceName"} -- consume food from your inventory
-- Drink: {} -- drink water
-- Rest: {} -- recover energy
-- Move: {"destination": "location-uuid"} -- travel to another location
-- Build: {"structure_type": "StructureTypeName"} -- build a structure
-- Communicate: {"target_agent": "agent-uuid", "message": "your message"} -- message another agent
-- Broadcast: {"message": "your message"} -- post a message for all agents here
-- NoAction: {} -- do nothing this tick (hunger still increases)
+#### Survival
+
+- **Gather**: `{"resource": "ResourceName"}` -- collect a resource at your location (Wood, Stone, FoodBerry, FoodFish, FoodRoot, Water, Fiber, Clay, Hide)
+- **Eat**: `{"food_type": "FoodResourceName"}` -- consume food from your inventory to reduce hunger (FoodBerry, FoodFish, FoodRoot, FoodMeat, FoodFarmed, FoodCooked)
+- **Drink**: `{}` -- drink water (requires Water at location or in inventory)
+- **Rest**: `{}` -- recover energy (bonus if sheltered in a structure)
+- **Move**: `{"destination": "location-uuid"}` -- travel to an adjacent location via a known route (check Routes for destinations and costs)
+
+#### Communication
+
+- **Communicate**: `{"target_agent": "agent-uuid", "message": "your message"}` -- send a direct message to another agent at your location (max 500 chars)
+- **Broadcast**: `{"message": "your message"}` -- post a public message visible to all agents at your location (max 500 chars)
+- **Conspire**: `{"co_conspirators": ["agent-uuid", ...], "plan": "your secret plan"}` -- secret message shared only with named agents at your location
+
+#### Economy
+
+- **TradeOffer**: `{"target_agent": "agent-uuid", "offer": {"Wood": 5}, "request": {"FoodBerry": 3}}` -- propose a resource exchange with another agent at your location
+- **TradeAccept**: `{"trade_id": "trade-uuid"}` -- accept a pending trade offer made to you
+- **TradeReject**: `{"trade_id": "trade-uuid"}` -- reject a pending trade offer made to you
+
+#### Knowledge
+
+- **Teach**: `{"target_agent": "agent-uuid", "knowledge": "knowledge_name"}` -- teach something you know to another agent at your location
+- **Write**: `{"knowledge": "knowledge_name"}` -- write knowledge to a Library structure at your location
+- **Read**: `{"knowledge": "knowledge_name"}` -- read knowledge from a Library structure at your location
+
+#### Construction
+
+- **Build**: `{"structure_type": "StructureType"}` -- build a structure at your location (requires materials: LeanTo, BasicHut, Campfire, StoragePit, Well, FarmPlot, Workshop, MeetingHall, Forge, Library, Market, Wall, Bridge)
+- **Repair**: `{"structure_id": "structure-uuid"}` -- restore durability to an existing structure at your location
+- **Demolish**: `{"structure_id": "structure-uuid"}` -- destroy a structure and salvage materials
+- **ImproveRoute**: `{"destination": "location-uuid"}` -- upgrade the path type of a route from your location
+
+#### Production
+
+- **FarmPlant**: `{}` -- plant crops on a FarmPlot at your location
+- **FarmHarvest**: `{}` -- harvest mature crops from a FarmPlot at your location
+- **Craft**: `{"output": "ResourceName"}` -- create tools or processed goods at a Workshop (Tool, ToolAdvanced, Medicine)
+- **Mine**: `{}` -- extract Ore from rocky terrain at your location
+- **Smelt**: `{}` -- convert Ore to Metal at a Forge at your location
+
+#### Conflict
+
+- **Steal**: `{"target_agent": "agent-uuid", "resource": "ResourceName"}` -- attempt to take a resource from another agent at your location (may fail; risk of detection)
+- **Attack**: `{"target_agent": "agent-uuid"}` -- engage in physical combat with another agent at your location (may injure or kill)
+- **Intimidate**: `{"target_agent": "agent-uuid"}` -- threaten another agent at your location without dealing damage
+
+#### Diplomacy
+
+- **Propose**: `{"group_id": "group-uuid", "proposal": "description"}` -- propose a decision, alliance, or treaty to a group you belong to
+- **Vote**: `{"group_id": "group-uuid", "in_favor": true}` -- cast a vote on a pending group proposal (true or false)
+- **Marry**: `{"partner_agent": "agent-uuid"}` -- enter a formal partnership with another agent (requires mutual consent)
+- **Divorce**: `{"partner_agent": "agent-uuid"}` -- dissolve a formal partnership
+
+#### Groups and Governance
+
+- **FormGroup**: `{"name": "group name", "invited_members": ["agent-uuid", ...]}` -- create a named social group and invite members
+- **Legislate**: `{"group_id": "group-uuid", "rule_name": "name", "rule_description": "what the rule mandates or prohibits"}` -- propose a law within your group
+- **Enforce**: `{"target_agent": "agent-uuid", "rule_id": "rule-uuid", "consequence": "description"}` -- enforce a rule against an agent in your group
+
+#### Life
+
+- **Reproduce**: `{"partner_agent": "agent-uuid"}` -- attempt to produce offspring with another agent (requires mutual consent, sufficient energy, and relationship threshold)
+- **Claim**: `{"structure_id": "structure-uuid"}` -- claim ownership of an unowned structure at your location
+
+#### Spiritual
+
+- **Pray**: `{"intent": "what you pray about"}` -- perform a spiritual or ritualistic action (intent is optional)
+
+#### Open
+
+- **Freeform**: `{"intent": "what you want to do", "action_category": "category", "target": {"Agent": "agent-uuid"}, "parameters": {}}` -- propose any novel action not covered above; the world will judge if it is physically possible
+
+#### System
+
+- **NoAction**: `{}` -- do nothing this tick (hunger still increases, energy still drains)
+
+---
 
 Choose wisely. Your survival depends on it.

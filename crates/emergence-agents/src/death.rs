@@ -20,6 +20,8 @@ use crate::inventory;
 pub enum DeathCause {
     /// Agent's health reached 0 due to starvation (hunger-induced health loss).
     Starvation,
+    /// Agent's health reached 0 due to dehydration (thirst-induced health loss).
+    Dehydration,
     /// Agent's age exceeded the configured lifespan.
     OldAge,
     /// Agent's health reached 0 due to an external injury or illness.
@@ -30,6 +32,7 @@ impl core::fmt::Display for DeathCause {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Starvation => write!(f, "starvation"),
+            Self::Dehydration => write!(f, "dehydration"),
             Self::OldAge => write!(f, "old_age"),
             Self::Injury => write!(f, "injury"),
         }
@@ -49,9 +52,13 @@ pub const fn check_death(state: &AgentState, config: &VitalsConfig) -> Option<De
     // Health at zero
     if state.health == 0 {
         // Determine the proximate cause: if hunger is at max, it was starvation.
+        // If thirst is at max, it was dehydration.
         // Otherwise, it was injury/other.
         if state.hunger >= config.starvation_threshold {
             return Some(DeathCause::Starvation);
+        }
+        if state.thirst >= config.dehydration_threshold {
+            return Some(DeathCause::Dehydration);
         }
         return Some(DeathCause::Injury);
     }
@@ -134,6 +141,7 @@ mod tests {
             energy: 80,
             health: 100,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick: 0,
             location_id: LocationId::new(),
@@ -260,6 +268,7 @@ mod tests {
     #[test]
     fn death_cause_display() {
         assert_eq!(DeathCause::Starvation.to_string(), "starvation");
+        assert_eq!(DeathCause::Dehydration.to_string(), "dehydration");
         assert_eq!(DeathCause::OldAge.to_string(), "old_age");
         assert_eq!(DeathCause::Injury.to_string(), "injury");
     }

@@ -1,11 +1,15 @@
-# Emergence — Infrastructure Services
-# Dragonfly (hot state), PostgreSQL (event store), NATS (event bus)
+# Emergence — Docker Compose
+# Infrastructure (Dragonfly, PostgreSQL, NATS) + Application (Engine, Runner)
 #
 # Usage:
-#   docker compose up -d
-#   docker compose down
+#   docker compose up -d                  # start everything
+#   docker compose up -d dragonfly postgres nats  # infra only
+#   docker compose down                   # stop everything
 #
 # Requires: .env file (copy from .env.example)
+#
+# The Observer React app runs OUTSIDE Docker and connects to the
+# engine's exposed Observer API port (default 8080).
 #
 # Resource limits (mem_limit, cpus) are omitted because the host kernel
 # does not expose cgroup memory controllers.  Add them back when running
@@ -14,11 +18,14 @@
 #   cpus: 1.0
 
 services:
+  # ===========================================================================
+  # Infrastructure Services
+  # ===========================================================================
+
   dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
     container_name: emergence-dragonfly
-    ports:
-      - "${DRAGONFLY_PORT:-6379}:6379"
+    # No host ports — only accessible within the Docker network.
     volumes:
       - dragonfly_data:/data
     networks:
@@ -34,8 +41,7 @@ services:
   postgres:
     image: postgres:18
     container_name: emergence-postgres
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # No host ports — only accessible within the Docker network.
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-emergence}
       POSTGRES_USER: ${POSTGRES_USER:-emergence}
@@ -56,9 +62,7 @@ services:
     image: nats:alpine
     container_name: emergence-nats
     command: ["-js", "-m", "8222", "--store_dir", "/data"]
-    ports:
-      - "${NATS_PORT:-4222}:4222"
-      - "${NATS_MONITOR_PORT:-8222}:8222"
+    # No host ports — only accessible within the Docker network.
     volumes:
       - nats_data:/data
     networks:
@@ -69,6 +73,65 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Application Services
+  # ===========================================================================
+
+  emergence-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emergence-engine
+    command: ["/usr/local/bin/emergence-engine"]
+    env_file: .env
+    environment:
+      # Override URLs to use Docker service names instead of localhost.
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-emergence}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-emergence}"
+      DRAGONFLY_URL: "redis://dragonfly:6379"
+      NATS_URL: "nats://nats:4222"
+    volumes:
+      - ./emergence-config.yaml:/app/emergence-config.yaml:ro
+      - ./crates/emergence-db/migrations:/app/migrations:ro
+      - ./security/seccomp-emergence.json:/app/seccomp-emergence.json:ro
+    security_opt:
+      - seccomp=./security/seccomp-emergence.json
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    ports:
+      - "${OBSERVER_PORT:-8080}:8080"
+    networks:
+      - emergence
+    restart: unless-stopped
+
+  emergence-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emergence-runner
+    command: ["/usr/local/bin/emergence-runner"]
+    env_file: .env
+    environment:
+      # Override URLs to use Docker service names instead of localhost.
+      NATS_URL: "nats://nats:4222"
+    volumes:
+      - ./templates:/app/templates:ro
+      - ./security/seccomp-emergence.json:/app/seccomp-emergence.json:ro
+    security_opt:
+      - seccomp=./security/seccomp-emergence.json
+    depends_on:
+      nats:
+        condition: service_started
+      emergence-engine:
+        condition: service_started
+    networks:
+      - emergence
     restart: unless-stopped
 
 volumes:

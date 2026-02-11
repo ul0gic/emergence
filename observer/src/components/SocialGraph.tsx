@@ -11,13 +11,11 @@ import * as d3 from "d3";
 
 import type { AgentListItem } from "../types/generated/index.ts";
 import { formatDecimal } from "../utils/format.ts";
-import { MOCK_AGENTS, MOCK_AGENT_DETAIL } from "../utils/mockData.ts";
 
 interface SocialGraphProps {
   agents: AgentListItem[];
   /** Map of agent ID -> relationship map (agentId -> score string). */
   relationships: Map<string, Record<string, string | undefined>>;
-  useMock?: boolean;
 }
 
 interface SocialNode extends d3.SimulationNodeDatum {
@@ -42,45 +40,12 @@ function scoreToColor(score: number): string {
 }
 
 export default function SocialGraph({
-  agents: propAgents,
-  relationships: propRelationships,
-  useMock = false,
+  agents,
+  relationships,
 }: SocialGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedEdge, setSelectedEdge] = useState<SocialLink | null>(null);
-
-  const agents = useMock ? MOCK_AGENTS : propAgents;
-
-  // Build mock relationships from the mock agent detail.
-  const relationships = useMemo(() => {
-    if (!useMock) return propRelationships;
-    const map = new Map<string, Record<string, string | undefined>>();
-    // Kora's relationships.
-    map.set("01945c2a-3b4f-7def-8a12-bc34567890a1", MOCK_AGENT_DETAIL.state?.relationships ?? {});
-    // Add reciprocal and extra ones.
-    map.set("01945c2a-3b4f-7def-8a12-bc34567890a2", {
-      "01945c2a-3b4f-7def-8a12-bc34567890a1": "0.70",
-      "01945c2a-3b4f-7def-8a12-bc34567890a5": "0.50",
-      "01945c2a-3b4f-7def-8a12-bc34567890a7": "0.60",
-    });
-    map.set("01945c2a-3b4f-7def-8a12-bc34567890a3", {
-      "01945c2a-3b4f-7def-8a12-bc34567890a1": "0.30",
-      "01945c2a-3b4f-7def-8a12-bc34567890a4": "0.40",
-    });
-    map.set("01945c2a-3b4f-7def-8a12-bc34567890a4", {
-      "01945c2a-3b4f-7def-8a12-bc34567890a3": "0.40",
-      "01945c2a-3b4f-7def-8a12-bc34567890a9": "0.80",
-    });
-    map.set("01945c2a-3b4f-7def-8a12-bc34567890a5", {
-      "01945c2a-3b4f-7def-8a12-bc34567890a1": "0.55",
-      "01945c2a-3b4f-7def-8a12-bc34567890a2": "0.50",
-    });
-    map.set("01945c2a-3b4f-7def-8a12-bc34567890a6", {
-      "01945c2a-3b4f-7def-8a12-bc34567890a3": "-0.30",
-    });
-    return map;
-  }, [useMock, propRelationships]);
 
   const { nodes, links } = useMemo(() => {
     const aliveAgents = agents.filter((a) => a.alive);

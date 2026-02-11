@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

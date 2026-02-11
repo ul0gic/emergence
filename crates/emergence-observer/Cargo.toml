@@ -21,6 +21,7 @@ tracing.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+rust_decimal.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

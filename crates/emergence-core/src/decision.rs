@@ -118,10 +118,12 @@ mod tests {
             self_state: SelfState {
                 id: agent_id,
                 name: String::from("Test Agent"),
+                sex: emergence_types::Sex::Male,
                 age: 0,
                 energy: 80,
                 health: 100,
                 hunger: 0,
+                thirst: 0,
                 location_name: String::from("Meadow"),
                 inventory: BTreeMap::new(),
                 carry_load: String::from("0/50"),

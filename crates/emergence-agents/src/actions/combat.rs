@@ -488,6 +488,7 @@ mod tests {
             energy,
             health,
             hunger: 0,
+            thirst: 0,
             age: 100,
             born_at_tick: 0,
             location_id: location,

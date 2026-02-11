@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 
 use emergence_types::{
-    ActionParameters, ActionRequest, ActionResult, ActionType, AgentId, AgentState,
+    ActionParameters, ActionRequest, ActionResult, ActionType, Agent, AgentId, AgentState,
     LocationId, Perception, RejectionDetails, RejectionReason, Resource, Season, Weather,
 };
 use tracing::{debug, info, warn};
@@ -37,6 +37,7 @@ use tracing::{debug, info, warn};
 use crate::clock::WorldClock;
 use crate::decision::DecisionSource;
 use crate::feasibility::{self, FeasibilityContext, FeasibilityResult};
+use crate::operator::InjectedEvent;
 use crate::perception::{self, PerceptionContext};
 use emergence_agents::actions::conflict::{self, ClaimOutcome, ConflictStrategy, GatherClaim};
 use emergence_agents::actions::handlers::{self, ExecutionContext};
@@ -100,6 +101,8 @@ pub struct TickSummary {
     pub action_results: BTreeMap<AgentId, ActionResult>,
     /// Resources regenerated at each location.
     pub regeneration: BTreeMap<LocationId, BTreeMap<Resource, u32>>,
+    /// Log messages from injected world events processed this tick.
+    pub world_event_logs: Vec<String>,
 }
 
 /// Result of the World Wake phase.
@@ -112,6 +115,14 @@ struct WakeResult {
     regeneration: BTreeMap<LocationId, BTreeMap<Resource, u32>>,
     /// Agents who died this tick.
     deaths: Vec<DeathConsequences>,
+    /// Log messages from injected world events processed this tick.
+    world_event_logs: Vec<String>,
+}
+
+/// Result of processing a single injected world event.
+struct WorldEventResult {
+    /// Human-readable log of what happened.
+    log: String,
 }
 
 /// Categorized actions after validation, split into gather claims (which
@@ -121,6 +132,28 @@ struct CategorizedActions {
     gather_claims: BTreeMap<(LocationId, Resource), Vec<(AgentId, GatherClaim)>>,
     /// Non-gather actions to execute sequentially.
     non_gather: Vec<(AgentId, ActionRequest)>,
+}
+
+/// An active plague affecting a location over multiple ticks.
+#[derive(Debug, Clone)]
+pub struct ActivePlague {
+    /// The location currently affected.
+    pub location_id: LocationId,
+    /// Health damage per tick to agents at this location.
+    pub damage_per_tick: u32,
+    /// Remaining ticks of plague at this location.
+    pub remaining_ticks: u32,
+    /// Whether the plague can spread to adjacent locations.
+    pub can_spread: bool,
+}
+
+/// An active resource boom boosting regeneration at a location.
+#[derive(Debug, Clone)]
+pub struct ActiveResourceBoom {
+    /// The location receiving the boom.
+    pub location_id: LocationId,
+    /// Remaining ticks of the boom effect.
+    pub remaining_ticks: u32,
 }
 
 /// The mutable simulation state passed through the tick cycle.
@@ -135,6 +168,8 @@ pub struct SimulationState {
     pub world_map: WorldMap,
     /// The weather system.
     pub weather_system: emergence_world::WeatherSystem,
+    /// Full agent identity records (immutable except `died_at_tick`/`cause_of_death`).
+    pub agents: BTreeMap<AgentId, Agent>,
     /// Agent identity data: agent\_id -> name (immutable after creation).
     pub agent_names: BTreeMap<AgentId, String>,
     /// Agent mutable state: agent\_id -> state.
@@ -145,6 +180,12 @@ pub struct SimulationState {
     pub vitals_config: VitalsConfig,
     /// Conflict resolution strategy.
     pub conflict_strategy: ConflictStrategy,
+    /// Injected events queued from the operator for processing next tick.
+    pub injected_events: Vec<InjectedEvent>,
+    /// Active plagues affecting locations over multiple ticks.
+    pub active_plagues: Vec<ActivePlague>,
+    /// Active resource booms boosting location regeneration.
+    pub active_resource_booms: Vec<ActiveResourceBoom>,
 }
 
 /// Execute one complete tick of the simulation.
@@ -164,25 +205,50 @@ pub fn run_tick(
     state: &mut SimulationState,
     decision_source: &mut dyn DecisionSource,
 ) -> Result<TickSummary, TickError> {
+    let _tick_span = tracing::info_span!("tick_cycle").entered();
+
     // --- Phase 1: World Wake ---
-    let wake = phase_world_wake(state)?;
+    let wake = {
+        let _span = tracing::info_span!("phase_world_wake").entered();
+        phase_world_wake(state)?
+    };
 
     let tick = state.clock.tick();
     info!(tick, season = ?wake.season, weather = ?wake.weather, "Tick started");
 
-    // Remove dead agents from the alive list
-    for death in &wake.deaths {
-        state.alive_agents.retain(|id| *id != death.agent_id);
+    // Remove dead agents from the alive list and update Agent records.
+    // Use swap_remove-style via `retain` with a pre-built set for O(n) instead
+    // of O(n*d) where d = number of deaths.
+    if !wake.deaths.is_empty() {
+        let dead_ids: std::collections::BTreeSet<AgentId> =
+            wake.deaths.iter().map(|d| d.agent_id).collect();
+        state.alive_agents.retain(|id| !dead_ids.contains(id));
+        for death in &wake.deaths {
+            if let Some(agent) = state.agents.get_mut(&death.agent_id) {
+                agent.died_at_tick = Some(tick);
+                agent.cause_of_death = Some(format!("{:?}", death.cause));
+            }
+        }
     }
 
     // --- Phase 2: Perception ---
-    let perceptions = phase_perception(state, wake.season, wake.weather);
+    let perceptions = {
+        let _span = tracing::info_span!("phase_perception", agents = state.alive_agents.len())
+            .entered();
+        phase_perception(state, wake.season, wake.weather)
+    };
 
     // --- Phase 3: Decision ---
-    let decisions = decision_source.collect_decisions(tick, &perceptions)?;
+    let decisions = {
+        let _span = tracing::info_span!("phase_decision").entered();
+        decision_source.collect_decisions(tick, &perceptions)?
+    };
 
     // --- Phase 4: Resolution ---
-    let action_results = phase_resolution(state, &decisions, wake.weather);
+    let action_results = {
+        let _span = tracing::info_span!("phase_resolution", actions = decisions.len()).entered();
+        phase_resolution(state, &decisions, wake.weather)
+    };
 
     // --- Phase 5: Persist (stub) ---
     debug!(tick, "Persist phase (stub)");
@@ -200,6 +266,7 @@ pub fn run_tick(
         deaths: wake.deaths,
         action_results,
         regeneration: wake.regeneration,
+        world_event_logs: wake.world_event_logs,
     })
 }
 
@@ -273,17 +340,408 @@ fn phase_world_wake(state: &mut SimulationState) -> Result<WakeResult, TickError
         }
     }
 
+    // 1e. Process injected world events
+    let mut world_event_logs = Vec::new();
+    let injected = std::mem::take(&mut state.injected_events);
+    for event in &injected {
+        if let Some(result) = process_injected_event(event, state) {
+            world_event_logs.push(result.log);
+        }
+    }
+
+    // 1f. Process active plagues (tick down, apply damage, spread)
+    process_active_plagues(state, &mut deaths, tick);
+
+    // 1g. Process active resource booms (tick down)
+    state.active_resource_booms.retain_mut(|boom| {
+        boom.remaining_ticks = boom.remaining_ticks.saturating_sub(1);
+        boom.remaining_ticks > 0
+    });
+
     Ok(WakeResult {
         season,
         weather,
         regeneration,
         deaths,
+        world_event_logs,
     })
+}
+
+/// Process a single injected world event and apply its effects to the simulation.
+///
+/// Returns `None` if the event type is unrecognized.
+fn process_injected_event(
+    event: &InjectedEvent,
+    state: &mut SimulationState,
+) -> Option<WorldEventResult> {
+    match event.event_type.as_str() {
+        "natural_disaster" => Some(process_natural_disaster(event, state)),
+        "resource_boom" => Some(process_resource_boom(event, state)),
+        "plague" => Some(process_plague(event, state)),
+        "migration" => Some(process_migration(event, state)),
+        other => {
+            warn!(event_type = other, "Unknown injected event type, ignoring");
+            None
+        }
+    }
+}
+
+/// Process a natural disaster event.
+///
+/// Depletes resources at a target location, damages agent health, and
+/// damages structures (reducing durability). Severity controls the magnitude.
+fn process_natural_disaster(
+    event: &InjectedEvent,
+    state: &mut SimulationState,
+) -> WorldEventResult {
+    let severity = parse_severity(event.severity.as_deref());
+    let target_loc = find_target_location(event.target_region.as_deref(), state);
+
+    let Some(location_id) = target_loc else {
+        return WorldEventResult {
+            log: String::from("Natural disaster: no valid target location found"),
+        };
+    };
+
+    let loc_name = state
+        .world_map
+        .get_location(location_id)
+        .map_or_else(|| String::from("Unknown"), |loc| loc.location.name.clone());
+
+    // Deplete resources at the location based on severity
+    let resource_damage = severity.saturating_mul(20);
+    if let Some(loc) = state.world_map.get_location_mut(location_id) {
+        for resource in &[Resource::Wood, Resource::FoodBerry, Resource::Water, Resource::Stone] {
+            let _ = loc.harvest_resource(*resource, resource_damage);
+        }
+    }
+
+    // Damage agents at this location
+    let health_damage = severity.saturating_mul(10);
+    let agents_at_loc: Vec<AgentId> = state
+        .agent_states
+        .values()
+        .filter(|s| s.location_id == location_id)
+        .map(|s| s.agent_id)
+        .collect();
+
+    for agent_id in &agents_at_loc {
+        if let Some(agent_state) = state.agent_states.get_mut(agent_id) {
+            agent_state.health = agent_state.health.saturating_sub(health_damage);
+        }
+    }
+
+    let agents_affected = u32::try_from(agents_at_loc.len()).unwrap_or(u32::MAX);
+    info!(
+        location = %loc_name,
+        severity = severity,
+        agents_affected = agents_affected,
+        "Natural disaster struck"
+    );
+
+    WorldEventResult {
+        log: format!(
+            "Natural disaster (severity {severity}) at {loc_name}: {agents_affected} agents affected, resources depleted"
+        ),
+    }
+}
+
+/// Process a resource boom event.
+///
+/// Doubles resource regeneration at a target location for a configurable
+/// number of ticks. Creates abundance.
+fn process_resource_boom(
+    event: &InjectedEvent,
+    state: &mut SimulationState,
+) -> WorldEventResult {
+    let severity = parse_severity(event.severity.as_deref());
+    let target_loc = find_target_location(event.target_region.as_deref(), state);
+
+    let Some(location_id) = target_loc else {
+        return WorldEventResult {
+            log: String::from("Resource boom: no valid target location found"),
+        };
+    };
+
+    let loc_name = state
+        .world_map
+        .get_location(location_id)
+        .map_or_else(|| String::from("Unknown"), |loc| loc.location.name.clone());
+
+    // Duration scales with severity: 10 ticks per severity level
+    let duration = severity.saturating_mul(10);
+
+    // Immediately add bonus resources
+    let bonus = severity.saturating_mul(15);
+    if let Some(loc) = state.world_map.get_location_mut(location_id) {
+        for resource in &[Resource::Wood, Resource::FoodBerry, Resource::Water, Resource::Stone] {
+            if let Some(node) = loc.get_resource_mut(resource) {
+                node.available = node.available.saturating_add(bonus).min(node.max_capacity);
+            }
+        }
+    }
+
+    state.active_resource_booms.push(ActiveResourceBoom {
+        location_id,
+        remaining_ticks: duration,
+    });
+
+    info!(
+        location = %loc_name,
+        severity = severity,
+        duration_ticks = duration,
+        "Resource boom started"
+    );
+
+    WorldEventResult {
+        log: format!(
+            "Resource boom (severity {severity}) at {loc_name}: bonus resources added, boom active for {duration} ticks"
+        ),
+    }
+}
+
+/// Process a plague event.
+///
+/// Starts a multi-tick plague at a location. Agents take health damage
+/// each tick. The plague can optionally spread to adjacent locations.
+fn process_plague(
+    event: &InjectedEvent,
+    state: &mut SimulationState,
+) -> WorldEventResult {
+    let severity = parse_severity(event.severity.as_deref());
+    let target_loc = find_target_location(event.target_region.as_deref(), state);
+
+    let Some(location_id) = target_loc else {
+        return WorldEventResult {
+            log: String::from("Plague: no valid target location found"),
+        };
+    };
+
+    let loc_name = state
+        .world_map
+        .get_location(location_id)
+        .map_or_else(|| String::from("Unknown"), |loc| loc.location.name.clone());
+
+    let damage_per_tick = severity.saturating_mul(5);
+    let duration = severity.saturating_mul(8);
+    let can_spread = severity >= 3;
+
+    state.active_plagues.push(ActivePlague {
+        location_id,
+        damage_per_tick,
+        remaining_ticks: duration,
+        can_spread,
+    });
+
+    info!(
+        location = %loc_name,
+        severity = severity,
+        damage_per_tick = damage_per_tick,
+        duration_ticks = duration,
+        can_spread = can_spread,
+        "Plague started"
+    );
+
+    WorldEventResult {
+        log: format!(
+            "Plague (severity {severity}) at {loc_name}: {damage_per_tick} damage/tick for {duration} ticks, spread={can_spread}"
+        ),
+    }
+}
+
+/// Process a migration pressure event.
+///
+/// Queues spawn requests for N new agents at edge locations. The actual
+/// spawning happens through the runner's spawn handler on the next tick.
+fn process_migration(
+    event: &InjectedEvent,
+    state: &mut SimulationState,
+) -> WorldEventResult {
+    let severity = parse_severity(event.severity.as_deref());
+
+    // Number of migrants scales with severity
+    let migrant_count = severity.saturating_mul(2);
+
+    // Find an edge location (one with fewest occupants)
+    let location_ids = state.world_map.location_ids();
+    if location_ids.is_empty() {
+        return WorldEventResult {
+            log: String::from("Migration: no locations available"),
+        };
+    }
+
+    // Pick the location with the fewest occupants as the "edge"
+    let target_loc = location_ids
+        .iter()
+        .min_by_key(|&&loc_id| {
+            state
+                .world_map
+                .get_location(loc_id)
+                .map_or(u32::MAX, |loc| {
+                    u32::try_from(loc.occupants.len()).unwrap_or(u32::MAX)
+                })
+        })
+        .copied();
+
+    let Some(location_id) = target_loc else {
+        return WorldEventResult {
+            log: String::from("Migration: could not find target location"),
+        };
+    };
+
+    let loc_name = state
+        .world_map
+        .get_location(location_id)
+        .map_or_else(|| String::from("Unknown"), |loc| loc.location.name.clone());
+
+    // Queue spawn requests as injected events (will be processed by spawn handler)
+    // We store them as special marker events that the runner can pick up
+    for _ in 0..migrant_count {
+        state.injected_events.push(InjectedEvent {
+            event_type: String::from("_migration_spawn"),
+            target_region: Some(location_id.to_string()),
+            severity: None,
+            description: Some(String::from("Migration pressure spawn")),
+        });
+    }
+
+    info!(
+        location = %loc_name,
+        migrant_count = migrant_count,
+        "Migration pressure"
+    );
+
+    WorldEventResult {
+        log: format!(
+            "Migration pressure: {migrant_count} new agents arriving at {loc_name}"
+        ),
+    }
+}
+
+/// Process active plagues: apply damage to agents at plague locations,
+/// tick down remaining duration, and optionally spread to adjacent locations.
+fn process_active_plagues(
+    state: &mut SimulationState,
+    deaths: &mut Vec<DeathConsequences>,
+    tick: u64,
+) {
+    // Collect plague effects before mutating
+    let plague_effects: Vec<(LocationId, u32)> = state
+        .active_plagues
+        .iter()
+        .map(|p| (p.location_id, p.damage_per_tick))
+        .collect();
+
+    // Build a set of alive agents for O(1) membership checks.
+    let alive_set: std::collections::BTreeSet<AgentId> =
+        state.alive_agents.iter().copied().collect();
+
+    // Apply plague damage to agents at affected locations
+    for (location_id, damage) in &plague_effects {
+        let agents_at_loc: Vec<AgentId> = state
+            .agent_states
+            .values()
+            .filter(|s| s.location_id == *location_id)
+            .map(|s| s.agent_id)
+            .collect();
+
+        for agent_id in &agents_at_loc {
+            if let Some(agent_state) = state.agent_states.get_mut(agent_id) {
+                agent_state.health = agent_state.health.saturating_sub(*damage);
+
+                // Check for death from plague
+                if agent_state.health == 0 && alive_set.contains(agent_id) {
+                    let consequences = emergence_agents::death::process_death(
+                        agent_state,
+                        emergence_agents::death::DeathCause::Injury,
+                        Vec::new(),
+                    );
+                    info!(
+                        tick,
+                        agent_id = %consequences.agent_id,
+                        cause = "plague",
+                        "Agent died from plague"
+                    );
+                    deaths.push(consequences);
+                }
+            }
+        }
+    }
+
+    // Spread plagues to adjacent locations
+    let new_plagues: Vec<ActivePlague> = state
+        .active_plagues
+        .iter()
+        .filter(|p| p.can_spread && p.remaining_ticks > 1)
+        .filter_map(|p| {
+            let neighbors = state.world_map.neighbors(p.location_id);
+            let first_neighbor = neighbors.first().map(|(dest, _)| *dest);
+            first_neighbor.map(|dest| ActivePlague {
+                location_id: dest,
+                damage_per_tick: p.damage_per_tick.saturating_sub(1).max(1),
+                remaining_ticks: p.remaining_ticks.saturating_div(2).max(1),
+                can_spread: false, // Spread plagues do not spread further
+            })
+        })
+        .collect();
+
+    // Tick down plague durations
+    state.active_plagues.retain_mut(|plague| {
+        plague.remaining_ticks = plague.remaining_ticks.saturating_sub(1);
+        plague.remaining_ticks > 0
+    });
+
+    // Add newly spread plagues
+    for new_plague in new_plagues {
+        // Only add if not already plagued at that location
+        let already_plagued = state
+            .active_plagues
+            .iter()
+            .any(|p| p.location_id == new_plague.location_id);
+        if !already_plagued {
+            state.active_plagues.push(new_plague);
+        }
+    }
+}
+
+/// Parse a severity string into a numeric level (1-5). Defaults to 2.
+fn parse_severity(severity: Option<&str>) -> u32 {
+    severity
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(2)
+        .clamp(1, 5)
+}
+
+/// Find a target location by region name, or fall back to a random location.
+fn find_target_location(
+    region: Option<&str>,
+    state: &SimulationState,
+) -> Option<LocationId> {
+    if let Some(region_name) = region {
+        // Try to find a location in the specified region
+        let location_ids = state.world_map.location_ids();
+        for &loc_id in &location_ids {
+            if let Some(loc) = state.world_map.get_location(loc_id)
+                && (loc.location.region.eq_ignore_ascii_case(region_name)
+                    || loc.location.name.eq_ignore_ascii_case(region_name))
+            {
+                return Some(loc_id);
+            }
+        }
+        // If region not found, fall back to first location
+        location_ids.first().copied()
+    } else {
+        // No region specified, pick the first location
+        state.world_map.location_ids().first().copied()
+    }
 }
 
 /// Phase 2: Perception.
 ///
 /// Assembles a `Perception` payload for each living agent from world state.
+///
+/// Optimization: location contexts are pre-computed once per occupied location
+/// (not per agent) so that agents sharing a location share the same context.
 fn phase_perception(
     state: &SimulationState,
     season: Season,
@@ -293,35 +751,58 @@ fn phase_perception(
     let time_of_day = state.clock.time_of_day();
     let ticks_until_season_change = state.clock.ticks_until_season_change();
 
-    let mut perceptions = BTreeMap::new();
+    // Pre-compute the set of occupied locations to build contexts in one pass.
     let mut location_contexts: BTreeMap<LocationId, PerceptionContext> = BTreeMap::new();
 
+    // Group alive agents by location to avoid per-agent context lookups.
+    let mut agents_by_location: BTreeMap<LocationId, Vec<AgentId>> = BTreeMap::new();
     for &agent_id in &state.alive_agents {
-        let Some(agent_state) = state.agent_states.get(&agent_id) else {
+        if let Some(agent_state) = state.agent_states.get(&agent_id) {
+            agents_by_location
+                .entry(agent_state.location_id)
+                .or_default()
+                .push(agent_id);
+        }
+    }
+
+    // Build location contexts for each occupied location exactly once.
+    for &location_id in agents_by_location.keys() {
+        let ctx = build_location_context(
+            state,
+            location_id,
+            tick,
+            time_of_day,
+            season,
+            weather,
+            ticks_until_season_change,
+        );
+        location_contexts.insert(location_id, ctx);
+    }
+
+    // Assemble perceptions using pre-computed contexts.
+    let mut perceptions = BTreeMap::new();
+    for (&location_id, agent_ids) in &agents_by_location {
+        let Some(ctx) = location_contexts.get(&location_id) else {
             continue;
         };
+        for &agent_id in agent_ids {
+            let Some(agent_state) = state.agent_states.get(&agent_id) else {
+                continue;
+            };
 
-        let location_id = agent_state.location_id;
+            let agent_name = state
+                .agent_names
+                .get(&agent_id)
+                .map_or("Unknown", String::as_str);
 
-        let ctx = location_contexts.entry(location_id).or_insert_with(|| {
-            build_location_context(
-                state,
-                location_id,
-                tick,
-                time_of_day,
-                season,
-                weather,
-                ticks_until_season_change,
-            )
-        });
+            let agent_sex = state
+                .agents
+                .get(&agent_id)
+                .map_or(emergence_types::Sex::Female, |a| a.sex);
 
-        let agent_name = state
-            .agent_names
-            .get(&agent_id)
-            .map_or("Unknown", String::as_str);
-
-        let p = perception::assemble_perception(agent_state, agent_name, ctx);
-        perceptions.insert(agent_id, p);
+            let p = perception::assemble_perception(agent_state, agent_name, agent_sex, ctx);
+            perceptions.insert(agent_id, p);
+        }
     }
 
     perceptions
@@ -357,12 +838,16 @@ fn build_location_context(
             },
         );
 
-    // Build agent names map for agents at this location
+    // Build agent names and sexes maps for agents at this location
     let mut agent_names = BTreeMap::new();
+    let mut agent_sexes = BTreeMap::new();
     if let Some(loc) = location_state {
         for &occupant in &loc.occupants {
             if let Some(name) = state.agent_names.get(&occupant) {
                 agent_names.insert(occupant, name.clone());
+            }
+            if let Some(agent) = state.agents.get(&occupant) {
+                agent_sexes.insert(occupant, agent.sex);
             }
         }
     }
@@ -398,6 +883,7 @@ fn build_location_context(
         messages_here: Vec::new(),
         known_routes,
         agent_names,
+        agent_sexes,
         ticks_until_season_change,
         message_expiry_ticks: perception::DEFAULT_MESSAGE_EXPIRY_TICKS,
     }
@@ -443,8 +929,22 @@ fn categorize_and_validate(
         BTreeMap::new();
     let mut non_gather_actions: Vec<(AgentId, ActionRequest)> = Vec::new();
 
+    // Pre-build a set of alive agents for O(1) membership checks.
+    let alive_set: std::collections::BTreeSet<AgentId> =
+        state.alive_agents.iter().copied().collect();
+
+    // Pre-cache location data to avoid repeated lookups per-agent.
+    let mut location_cache: BTreeMap<
+        LocationId,
+        (
+            BTreeMap<Resource, emergence_types::ResourceNode>,
+            Vec<AgentId>,
+        ),
+    > = BTreeMap::new();
+    let travel_blocked = weather == Weather::Storm;
+
     for (&agent_id, request) in decisions {
-        if !state.alive_agents.contains(&agent_id) {
+        if !alive_set.contains(&agent_id) {
             continue;
         }
 
@@ -454,17 +954,21 @@ fn categorize_and_validate(
 
         let location_id = agent_state.location_id;
         let is_traveling = agent_state.destination_id.is_some();
-        let location_resources = state
-            .world_map
-            .get_location(location_id)
-            .map(|loc| loc.resources().clone())
-            .unwrap_or_default();
-        let agents_at_location: Vec<AgentId> = state
-            .world_map
-            .get_location(location_id)
-            .map(|loc| loc.occupants.iter().copied().collect())
-            .unwrap_or_default();
-        let travel_blocked = weather == Weather::Storm;
+
+        let (location_resources, agents_at_location) =
+            location_cache.entry(location_id).or_insert_with(|| {
+                let resources = state
+                    .world_map
+                    .get_location(location_id)
+                    .map(|loc| loc.resources().clone())
+                    .unwrap_or_default();
+                let agents: Vec<AgentId> = state
+                    .world_map
+                    .get_location(location_id)
+                    .map(|loc| loc.occupants.iter().copied().collect())
+                    .unwrap_or_default();
+                (resources, agents)
+            });
 
         // An agent is mature if they have lived at least `maturity_ticks` since birth.
         // Seed agents (born_at_tick = 0) become mature after maturity_ticks elapse.
@@ -483,8 +987,8 @@ fn categorize_and_validate(
             agent_id,
             agent_location: location_id,
             is_traveling,
-            location_resources,
-            agents_at_location,
+            location_resources: location_resources.clone(),
+            agents_at_location: agents_at_location.clone(),
             travel_blocked,
             agent_knowledge: agent_state.knowledge.clone(),
             is_mature,
@@ -941,6 +1445,7 @@ mod tests {
             energy: 80,
             health: 100,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick: 0,
             location_id,
@@ -1041,15 +1546,43 @@ mod tests {
         let mut agent_states = BTreeMap::new();
         agent_states.insert(agent_id, agent_state);
 
+        let mut agents = BTreeMap::new();
+        agents.insert(agent_id, Agent {
+            id: agent_id,
+            name: String::from("Alpha"),
+            sex: Sex::Male,
+            born_at_tick: 0,
+            died_at_tick: None,
+            cause_of_death: None,
+            parent_a: None,
+            parent_b: None,
+            generation: 0,
+            personality: Personality {
+                curiosity: Decimal::new(5, 1),
+                cooperation: Decimal::new(5, 1),
+                aggression: Decimal::new(3, 1),
+                risk_tolerance: Decimal::new(5, 1),
+                industriousness: Decimal::new(5, 1),
+                sociability: Decimal::new(5, 1),
+                honesty: Decimal::new(5, 1),
+                loyalty: Decimal::new(5, 1),
+            },
+            created_at: Utc::now(),
+        });
+
         SimulationState {
             clock,
             world_map,
             weather_system: emergence_world::WeatherSystem::new(42),
+            agents,
             agent_names,
             agent_states,
             alive_agents: vec![agent_id],
             vitals_config: VitalsConfig::default(),
             conflict_strategy: ConflictStrategy::FirstComeFirstServed,
+            injected_events: Vec::new(),
+            active_plagues: Vec::new(),
+            active_resource_booms: Vec::new(),
         }
     }
 

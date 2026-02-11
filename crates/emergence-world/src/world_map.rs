@@ -20,7 +20,7 @@ use crate::route;
 ///
 /// Provides spatial queries, pathfinding, and batch operations like
 /// per-tick resource regeneration across all locations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WorldMap {
     /// All locations indexed by their identifier.
     locations: BTreeMap<LocationId, LocationState>,

@@ -14,10 +14,24 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
+use emergence_types::LocationId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 
 use crate::config::SimulationBoundsConfig;
+
+/// A request to spawn a new agent, queued by the operator and processed
+/// by the engine at the start of the next tick.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpawnRequest {
+    /// Optional display name for the agent. If `None`, a random name is
+    /// assigned from the name pool.
+    pub name: Option<String>,
+    /// Optional starting location. If `None`, a random location is chosen.
+    pub location_id: Option<LocationId>,
+    /// Personality generation mode: `"random"` for now.
+    pub personality_mode: String,
+}
 
 /// Reason why the simulation ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +76,9 @@ pub struct OperatorState {
     /// Whether a stop has been requested.
     stop_requested: AtomicBool,
 
+    /// Whether a restart has been requested.
+    restart_requested: AtomicBool,
+
     /// Current tick interval in milliseconds (runtime-adjustable).
     tick_interval_ms: AtomicU64,
 
@@ -77,6 +94,9 @@ pub struct OperatorState {
     /// Queue of operator-injected events awaiting processing.
     injected_events: Mutex<Vec<InjectedEvent>>,
 
+    /// Queue of agent spawn requests awaiting processing.
+    spawn_queue: Mutex<Vec<SpawnRequest>>,
+
     /// Reason the simulation ended, if it has.
     end_reason: Mutex<Option<SimulationEndReason>>,
 }
@@ -88,11 +108,13 @@ impl OperatorState {
             paused: AtomicBool::new(false),
             resume_notify: Notify::new(),
             stop_requested: AtomicBool::new(false),
+            restart_requested: AtomicBool::new(false),
             tick_interval_ms: AtomicU64::new(tick_interval_ms),
             started_at: Utc::now(),
             max_ticks: bounds.max_ticks,
             max_real_time_seconds: bounds.max_real_time_seconds,
             injected_events: Mutex::new(Vec::new()),
+            spawn_queue: Mutex::new(Vec::new()),
             end_reason: Mutex::new(None),
         }
     }
@@ -139,6 +161,26 @@ impl OperatorState {
     /// Check whether a stop has been requested.
     pub fn is_stop_requested(&self) -> bool {
         self.stop_requested.load(Ordering::Acquire)
+    }
+
+    // -----------------------------------------------------------------------
+    // Restart
+    // -----------------------------------------------------------------------
+
+    /// Request a simulation restart.
+    ///
+    /// The engine should check this flag and, if set, perform a clean
+    /// stop followed by re-initialization. The flag is set atomically
+    /// and is checked by the runner alongside the stop flag.
+    pub fn request_restart(&self) {
+        self.restart_requested.store(true, Ordering::Release);
+        // Also request stop so the tick loop exits cleanly.
+        self.stop_requested.store(true, Ordering::Release);
+    }
+
+    /// Check whether a restart has been requested.
+    pub fn is_restart_requested(&self) -> bool {
+        self.restart_requested.load(Ordering::Acquire)
     }
 
     /// Record the reason the simulation ended.
@@ -238,6 +280,29 @@ impl OperatorState {
         let mut queue = self.injected_events.lock().await;
         std::mem::take(&mut *queue)
     }
+
+    // -----------------------------------------------------------------------
+    // Agent Spawn Queue
+    // -----------------------------------------------------------------------
+
+    /// Queue an agent spawn request for the next tick.
+    ///
+    /// The engine will process the spawn queue before each tick, creating
+    /// new agents and adding them to the simulation state. The new agents
+    /// will be picked up by the runner on the next perception cycle.
+    pub async fn queue_agent_spawn(&self, request: SpawnRequest) {
+        let mut queue = self.spawn_queue.lock().await;
+        queue.push(request);
+    }
+
+    /// Drain all queued agent spawn requests.
+    ///
+    /// Called by the engine at the start of each tick to collect pending
+    /// spawn requests. After draining, the queue is empty.
+    pub async fn drain_spawn_queue(&self) -> Vec<SpawnRequest> {
+        let mut queue = self.spawn_queue.lock().await;
+        std::mem::take(&mut *queue)
+    }
 }
 
 /// JSON-serializable status of the simulation for the operator API.
@@ -276,6 +341,7 @@ mod tests {
             max_ticks: 0,
             max_real_time_seconds: 0,
             end_condition: String::from("manual"),
+            min_population: 0,
         }
     }
 
@@ -332,6 +398,7 @@ mod tests {
             max_ticks: 100,
             max_real_time_seconds: 0,
             end_condition: String::from("time_limit"),
+            min_population: 0,
         };
         let state = OperatorState::new(1000, &bounds);
         assert!(!state.tick_limit_reached(99));
@@ -361,5 +428,31 @@ mod tests {
         // After drain, queue is empty.
         let events2 = state.drain_injected_events().await;
         assert!(events2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn queue_and_drain_spawn_requests() {
+        let state = OperatorState::new(1000, &default_bounds());
+        state
+            .queue_agent_spawn(SpawnRequest {
+                name: Some(String::from("TestAgent")),
+                location_id: None,
+                personality_mode: String::from("random"),
+            })
+            .await;
+        state
+            .queue_agent_spawn(SpawnRequest {
+                name: None,
+                location_id: None,
+                personality_mode: String::from("random"),
+            })
+            .await;
+        let requests = state.drain_spawn_queue().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].name, Some(String::from("TestAgent")));
+        assert!(requests[1].name.is_none());
+        // After drain, queue is empty.
+        let requests2 = state.drain_spawn_queue().await;
+        assert!(requests2.is_empty());
     }
 }

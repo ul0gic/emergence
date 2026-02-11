@@ -30,14 +30,18 @@
 pub mod dragonfly;
 pub mod error;
 pub mod event_store;
+pub mod experiment_store;
 pub mod ledger_store;
 pub mod postgres;
 pub mod snapshot_store;
+pub mod tick_persist;
 
 // Re-export primary types for convenience.
 pub use dragonfly::DragonflyPool;
 pub use error::DbError;
 pub use event_store::{EventRow, EventStore};
+pub use experiment_store::{ExperimentSnapshotRow, ExperimentStore};
 pub use ledger_store::{LedgerRow, LedgerStore};
 pub use postgres::{PostgresConfig, PostgresPool};
 pub use snapshot_store::{AgentSnapshotRow, SnapshotStore, WorldSnapshotRow};
+pub use tick_persist::PersistError;

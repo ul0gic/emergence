@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::decision::DecisionSource;
-use crate::operator::{OperatorState, SimulationEndReason};
+use crate::operator::{OperatorState, SpawnRequest, SimulationEndReason};
 use crate::tick::{self, SimulationState, TickError, TickSummary};
 
 /// Errors that can occur during the simulation run.
@@ -62,6 +62,36 @@ impl TickCallback for NoOpCallback {
     fn on_tick(&mut self, _summary: &TickSummary, _state: &SimulationState) {}
 }
 
+/// Handler for processing agent spawn requests.
+///
+/// The runner calls this to create new agents from [`SpawnRequest`]s
+/// during the pre-tick phase. The handler is responsible for creating
+/// the `Agent` + `AgentState`, registering the occupant on the world
+/// map, and inserting into the simulation state.
+///
+/// Implementations live in the engine crate where they have access to
+/// the spawner infrastructure (name pool, personality generation, etc.).
+pub trait SpawnHandler: Send {
+    /// Process a single spawn request and integrate the new agent into
+    /// the simulation state.
+    ///
+    /// Returns `true` if the agent was successfully created and added,
+    /// `false` if the spawn failed (non-fatal; the runner logs a warning
+    /// and continues).
+    fn handle_spawn(&mut self, request: &SpawnRequest, state: &mut SimulationState) -> bool;
+}
+
+/// A no-op spawn handler that always returns `false`.
+///
+/// Used in tests where spawn processing is not needed.
+pub struct NoOpSpawnHandler;
+
+impl SpawnHandler for NoOpSpawnHandler {
+    fn handle_spawn(&mut self, _request: &SpawnRequest, _state: &mut SimulationState) -> bool {
+        false
+    }
+}
+
 /// Run the simulation loop until a termination condition is met.
 ///
 /// This is the main entry point for a bounded simulation run. It
@@ -89,6 +119,49 @@ pub async fn run_simulation(
     operator: &Arc<OperatorState>,
     callback: &mut dyn TickCallback,
 ) -> Result<SimulationResult, RunnerError> {
+    run_simulation_with_spawner(
+        state,
+        decision_source,
+        operator,
+        callback,
+        &mut NoOpSpawnHandler,
+        0,
+    )
+    .await
+}
+
+/// Run the simulation loop with agent spawning support.
+///
+/// Like [`run_simulation`], but additionally accepts a [`SpawnHandler`]
+/// for processing mid-simulation agent injection and a `min_population`
+/// floor for auto-recovery.
+///
+/// # Arguments
+///
+/// * `state` - Mutable simulation state (world, agents, clock)
+/// * `decision_source` - Source of agent decisions (LLM, stub, etc.)
+/// * `operator` - Shared operator control state
+/// * `callback` - Called after each tick for observer updates
+/// * `spawn_handler` - Processes spawn requests into new agents
+/// * `min_population` - Auto-spawn threshold (0 = disabled)
+///
+/// # Returns
+///
+/// Returns a [`SimulationResult`] describing why the simulation ended
+/// and the final tick summary.
+///
+/// # Errors
+///
+/// Returns [`RunnerError`] if a tick execution fails unrecoverably.
+#[allow(clippy::too_many_lines)]
+pub async fn run_simulation_with_spawner(
+    state: &mut SimulationState,
+    decision_source: &mut dyn DecisionSource,
+    operator: &Arc<OperatorState>,
+    callback: &mut dyn TickCallback,
+    spawn_handler: &mut dyn SpawnHandler,
+    min_population: u32,
+) -> Result<SimulationResult, RunnerError> {
     let mut last_summary: Option<TickSummary> = None;
     let mut total_ticks: u64 = 0;
 
@@ -96,6 +169,7 @@ pub async fn run_simulation(
         max_ticks = operator.max_ticks(),
         max_real_time_seconds = operator.max_real_time_seconds(),
         tick_interval_ms = operator.tick_interval_ms(),
+        min_population = min_population,
         "Simulation starting"
     );
 
@@ -135,6 +209,46 @@ pub async fn run_simulation(
             });
         }
 
+        // --- Process spawn queue (before tick) ---
+        let spawn_requests = operator.drain_spawn_queue().await;
+        if !spawn_requests.is_empty() {
+            info!(count = spawn_requests.len(), "Processing spawn queue");
+            for request in &spawn_requests {
+                if !spawn_handler.handle_spawn(request, state) {
+                    warn!(?request, "Failed to process spawn request");
+                }
+            }
+        }
+
+        // --- Drain injected events from operator into simulation state ---
+        let injected_events = operator.drain_injected_events().await;
+        if !injected_events.is_empty() {
+            info!(count = injected_events.len(), "Processing injected world events");
+            state.injected_events.extend(injected_events);
+        }
+
+        // --- Process migration spawn requests from previous tick's world events ---
+        let migration_spawns: Vec<String> = state
+            .injected_events
+            .iter()
+            .filter(|e| e.event_type == "_migration_spawn")
+            .filter_map(|e| e.target_region.clone())
+            .collect();
+        state.injected_events.retain(|e| e.event_type != "_migration_spawn");
+        for loc_id_str in &migration_spawns {
+            if let Ok(uuid) = loc_id_str.parse::<uuid::Uuid>() {
+                let location_id = emergence_types::LocationId::from(uuid);
+                let request = SpawnRequest {
+                    name: None,
+                    location_id: Some(location_id),
+                    personality_mode: String::from("random"),
+                };
+                if !spawn_handler.handle_spawn(&request, state) {
+                    warn!("Failed to spawn migration agent");
+                }
+            }
+        }
+
         // --- Execute tick ---
         let summary = tick::run_tick(state, decision_source)?;
 
@@ -145,14 +259,69 @@ pub async fn run_simulation(
 
         // --- Check extinction ---
         if summary.agents_alive == 0 {
-            info!(tick = summary.tick, "All agents dead -- extinction");
-            let reason = SimulationEndReason::Extinction;
-            operator.set_end_reason(reason.clone()).await;
-            return Ok(SimulationResult {
-                end_reason: reason,
-                final_summary: Some(summary),
-                total_ticks,
-            });
+            // Before declaring extinction, check if auto-recovery can save us.
+            if min_population > 0 {
+                let needed = min_population;
+                warn!(
+                    alive = 0u32,
+                    min = min_population,
+                    spawning = needed,
+                    "Population below minimum (extinction), auto-spawning {needed} agents"
+                );
+                for _ in 0..needed {
+                    let request = SpawnRequest {
+                        name: None,
+                        location_id: None,
+                        personality_mode: String::from("random"),
+                    };
+                    if !spawn_handler.handle_spawn(&request, state) {
+                        warn!("Failed to auto-spawn recovery agent");
+                    }
+                }
+                // Re-check after auto-spawn: if we still have 0 alive, declare extinction.
+                if state.alive_agents.is_empty() {
+                    info!(tick = summary.tick, "All agents dead -- extinction (auto-recovery failed)");
+                    let reason = SimulationEndReason::Extinction;
+                    operator.set_end_reason(reason.clone()).await;
+                    return Ok(SimulationResult {
+                        end_reason: reason,
+                        final_summary: Some(summary),
+                        total_ticks,
+                    });
+                }
+                // Auto-recovery succeeded, continue the loop.
+            } else {
+                info!(tick = summary.tick, "All agents dead -- extinction");
+                let reason = SimulationEndReason::Extinction;
+                operator.set_end_reason(reason.clone()).await;
+                return Ok(SimulationResult {
+                    end_reason: reason,
+                    final_summary: Some(summary),
+                    total_ticks,
+                });
+            }
+        } else if min_population > 0 {
+            // --- Auto-population recovery (non-extinction case) ---
+            let alive = summary.agents_alive;
+            if alive < min_population {
+                let needed = min_population.saturating_sub(alive);
+                warn!(
+                    alive = alive,
+                    min = min_population,
+                    spawning = needed,
+                    "Population below minimum ({alive}/{min_population}), auto-spawning {needed} agents"
+                );
+                for _ in 0..needed {
+                    let request = SpawnRequest {
+                        name: None,
+                        location_id: None,
+                        personality_mode: String::from("random"),
+                    };
+                    if !spawn_handler.handle_spawn(&request, state) {
+                        warn!("Failed to auto-spawn recovery agent");
+                    }
+                }
+            }
         }
 
         // --- Check tick limit (after tick) ---
@@ -245,6 +414,7 @@ mod tests {
             energy: 80,
             health: 100,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick: 0,
             location_id,
@@ -331,11 +501,15 @@ mod tests {
             clock,
             world_map,
             weather_system: emergence_world::WeatherSystem::new(42),
+            agents: BTreeMap::new(),
             agent_names,
             agent_states,
             alive_agents: vec![agent_id],
             vitals_config: emergence_agents::config::VitalsConfig::default(),
             conflict_strategy: emergence_agents::actions::conflict::ConflictStrategy::FirstComeFirstServed,
+            injected_events: Vec::new(),
+            active_plagues: Vec::new(),
+            active_resource_booms: Vec::new(),
         }
     }
 
@@ -347,6 +521,7 @@ mod tests {
             max_ticks: 5,
             max_real_time_seconds: 0,
             end_condition: String::from("time_limit"),
+            min_population: 0,
         };
         let operator = Arc::new(OperatorState::new(0, &bounds));
         let mut cb = NoOpCallback;
@@ -367,6 +542,7 @@ mod tests {
             max_ticks: 0,
             max_real_time_seconds: 0,
             end_condition: String::from("manual"),
+            min_population: 0,
         };
         let operator = Arc::new(OperatorState::new(0, &bounds));
         operator.request_stop();
@@ -388,6 +564,7 @@ mod tests {
             max_ticks: 0,
             max_real_time_seconds: 0,
             end_condition: String::from("extinction"),
+            min_population: 0,
         };
         let operator = Arc::new(OperatorState::new(0, &bounds));
         let mut cb = NoOpCallback;
@@ -425,6 +602,7 @@ mod tests {
             max_ticks: 3,
             max_real_time_seconds: 0,
             end_condition: String::from("time_limit"),
+            min_population: 0,
         };
         let operator = Arc::new(OperatorState::new(0, &bounds));
         let mut cb = CountCallback { count: 0 };
@@ -442,6 +620,7 @@ mod tests {
             max_ticks: 0,
             max_real_time_seconds: 0,
             end_condition: String::from("manual"),
+            min_population: 0,
         };
         let operator = Arc::new(OperatorState::new(1000, &bounds));
 

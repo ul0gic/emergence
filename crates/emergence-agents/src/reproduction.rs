@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use rand::Rng;
 use rust_decimal::Decimal;
 
-use emergence_types::{ActionType, AgentId, Personality};
+use emergence_types::{ActionType, AgentId, Personality, Sex};
 
 use crate::error::AgentError;
 use crate::knowledge::{self, KnowledgeBase};
@@ -300,6 +300,10 @@ pub const fn can_add_agent(current_population: u32, max_population: u32) -> bool
 /// manageable.
 #[derive(Debug, Clone)]
 pub struct ReproductionContext {
+    /// Initiating agent's biological sex.
+    pub initiator_sex: Sex,
+    /// Partner agent's biological sex.
+    pub partner_sex: Sex,
     /// Initiating agent's current health.
     pub initiator_health: u32,
     /// Initiating agent's current energy.
@@ -334,6 +338,16 @@ pub fn validate_reproduction(ctx: &ReproductionContext) -> Result<(), AgentError
     if !ctx.co_located {
         return Err(AgentError::ReproductionFailed {
             reason: String::from("agents are not at the same location"),
+        });
+    }
+
+    // Reproduction requires one male and one female partner.
+    if ctx.initiator_sex == ctx.partner_sex {
+        return Err(AgentError::ReproductionFailed {
+            reason: format!(
+                "reproduction requires one male and one female partner, but both are {}",
+                ctx.initiator_sex
+            ),
         });
     }
 
@@ -430,10 +444,16 @@ pub struct AgentBornDetails {
     pub child_id: AgentId,
     /// The new agent's display name.
     pub child_name: String,
+    /// The child's biological sex.
+    pub child_sex: Sex,
     /// First parent ID.
     pub parent_a: AgentId,
+    /// First parent's biological sex.
+    pub parent_a_sex: Sex,
     /// Second parent ID.
     pub parent_b: AgentId,
+    /// Second parent's biological sex.
+    pub parent_b_sex: Sex,
     /// The child's generation number.
     pub generation: u32,
     /// The tick when the child was born.
@@ -824,6 +844,8 @@ mod tests {
 
     fn make_repro_ctx() -> ReproductionContext {
         ReproductionContext {
+            initiator_sex: Sex::Male,
+            partner_sex: Sex::Female,
             initiator_health: 100,
             initiator_energy: 80,
             partner_health: 100,
@@ -904,6 +926,28 @@ mod tests {
         let mut ctx = make_repro_ctx();
         ctx.initiator_energy = 30;
         ctx.partner_energy = 30;
+        assert!(validate_reproduction(&ctx).is_ok());
+    }
+
+    #[test]
+    fn validate_reproduction_same_sex_male() {
+        let mut ctx = make_repro_ctx();
+        ctx.initiator_sex = Sex::Male;
+        ctx.partner_sex = Sex::Male;
+        assert!(validate_reproduction(&ctx).is_err());
+    }
+
+    #[test]
+    fn validate_reproduction_same_sex_female() {
+        let mut ctx = make_repro_ctx();
+        ctx.initiator_sex = Sex::Female;
+        ctx.partner_sex = Sex::Female;
+        assert!(validate_reproduction(&ctx).is_err());
+    }
+
+    #[test]
+    fn validate_reproduction_opposite_sex_passes() {
+        let ctx = make_repro_ctx(); // Male + Female by default
         assert!(validate_reproduction(&ctx).is_ok());
     }
 

@@ -21,23 +21,40 @@
 //! decisions are routed to the escalation backend first, while
 //! low/medium decisions use the cheap primary backend.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use emergence_types::{
-    ActionParameters, ActionRequest, ActionType, AgentId, Perception,
-};
+use emergence_types::{ActionParameters, ActionRequest, ActionType, AgentId, DecisionRecord, Perception};
 use futures::StreamExt;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
 use crate::complexity::{score_complexity, ComplexityLevel};
+use crate::containment;
 use crate::error::RunnerError;
 use crate::llm::LlmBackend;
 use crate::nats::NatsClient;
 use crate::parse::parse_llm_response;
 use crate::prompt::PromptEngine;
 use crate::rule_engine::{self, DecisionSource};
+
+/// Maximum length for the raw LLM response stored in a [`DecisionRecord`].
+const MAX_RAW_RESPONSE_LEN: usize = 4000;
+
+/// Maximum length for the prompt stored in a [`DecisionRecord`].
+const MAX_PROMPT_LEN: usize = 8000;
+
+/// Metadata captured from an LLM decision for the [`DecisionRecord`].
+struct LlmDecisionMeta {
+    /// The rendered prompt (system + user) sent to the LLM.
+    prompt_sent: String,
+    /// The raw text response from the LLM.
+    raw_response: String,
+    /// Which backend answered (e.g. `"openai-compatible"`, `"anthropic"`).
+    backend_name: String,
+    /// Wall-clock latency of the LLM call in milliseconds.
+    latency_ms: u64,
+}
 
 /// The agent decision runner.
 ///
@@ -60,6 +77,10 @@ pub struct AgentRunner {
     /// When true, high-complexity decisions are routed to the escalation
     /// backend first instead of the primary backend.
     complexity_routing_enabled: bool,
+    /// This runner's partition ID (0-indexed).
+    partition_id: u32,
+    /// Total number of runner partitions.
+    total_partitions: u32,
 }
 
 impl AgentRunner {
@@ -84,7 +105,19 @@ impl AgentRunner {
             routine_action_bypass,
             night_cycle_skip,
             complexity_routing_enabled,
+            partition_id: 0,
+            total_partitions: 1,
         }
+    }
+
+    /// Set the partition configuration for multi-runner mode.
+    ///
+    /// When `total_partitions > 1`, this runner only processes agents
+    /// where `hash(agent_id) % total_partitions == partition_id`.
+    pub const fn with_partitioning(mut self, partition_id: u32, total_partitions: u32) -> Self {
+        self.partition_id = partition_id;
+        self.total_partitions = total_partitions;
+        self
     }
 
     /// Run the main decision loop.
@@ -98,7 +131,11 @@ impl AgentRunner {
     /// Returns [`RunnerError`] if NATS subscription fails.
     pub async fn run(&self) -> Result<(), RunnerError> {
         let mut subscriber = self.nats.subscribe_perceptions().await?;
-        info!("agent runner started, awaiting perception payloads");
+        info!(
+            partition_id = self.partition_id,
+            total_partitions = self.total_partitions,
+            "agent runner started, awaiting perception payloads"
+        );
 
         while let Some(message) = subscriber.next().await {
             let subject = message.subject.to_string();
@@ -114,6 +151,22 @@ impl AgentRunner {
             match NatsClient::deserialize_perception(&message.payload) {
                 Ok(perception) => {
                     let agent_id = perception.self_state.id;
+
+                    // Multi-runner partitioning: skip agents that belong to
+                    // other runner instances.
+                    if !NatsClient::is_my_agent(
+                        &agent_id,
+                        self.partition_id,
+                        self.total_partitions,
+                    ) {
+                        debug!(
+                            agent_id = %agent_id,
+                            partition_id = self.partition_id,
+                            "skipping agent (not my partition)"
+                        );
+                        continue;
+                    }
+
                     let action = self.decide(tick, &perception).await;
                     if let Err(e) = self.nats.publish_action(tick, &action).await {
                         warn!(
@@ -144,6 +197,9 @@ impl AgentRunner {
     /// night cycle optimization. If neither applies, falls through to the
     /// LLM pipeline with timeout. If the deadline is exceeded, returns a
     /// `NoAction` request so the agent does not miss the tick.
+    ///
+    /// After each decision (regardless of source), publishes a
+    /// [`DecisionRecord`] to NATS for the Observer dashboard.
     async fn decide(&self, tick: u64, perception: &Perception) -> ActionRequest {
         let agent_id = perception.self_state.id;
 
@@ -160,6 +216,12 @@ impl AgentRunner {
                 decision_source = DecisionSource::NightCycle.as_str(),
                 "decision bypassed LLM (night cycle)"
             );
+            self.publish_decision_record(
+                &action,
+                DecisionSource::NightCycle,
+                None,
+                Some("night_rest"),
+            );
             return action;
         }
 
@@ -174,17 +236,32 @@ impl AgentRunner {
                 decision_source = DecisionSource::RuleEngine.as_str(),
                 "decision bypassed LLM (routine action)"
             );
+            self.publish_decision_record(
+                &action,
+                DecisionSource::RuleEngine,
+                None,
+                Some(&format!("{:?}", action.action_type)),
+            );
             return action;
         }
 
+        // If we get here, the LLM is making the decision -- reset loop detection.
+        rule_engine::reset_loop_detection(agent_id);
+
         // Full LLM pipeline with timeout
         match timeout(self.decision_timeout, self.decide_inner(tick, perception)).await {
-            Ok(Ok(action)) => {
+            Ok(Ok((action, meta))) => {
                 debug!(
                     agent_id = %agent_id,
                     tick = tick,
                     decision_source = DecisionSource::Llm.as_str(),
                     "decision made via LLM"
+                );
+                self.publish_decision_record(
+                    &action,
+                    DecisionSource::Llm,
+                    Some(&meta),
+                    None,
                 );
                 action
             }
@@ -195,7 +272,14 @@ impl AgentRunner {
                     error = %e,
                     "decision pipeline failed, submitting NoAction"
                 );
-                no_action_request(agent_id, tick)
+                let action = no_action_request(agent_id, tick);
+                self.publish_decision_record(
+                    &action,
+                    DecisionSource::Llm,
+                    None,
+                    None,
+                );
+                action
             }
             Err(_) => {
                 warn!(
@@ -204,7 +288,14 @@ impl AgentRunner {
                     timeout_ms = self.decision_timeout.as_millis(),
                     "decision deadline exceeded, submitting NoAction"
                 );
-                no_action_request(agent_id, tick)
+                let action = no_action_request(agent_id, tick);
+                self.publish_decision_record_with_source(
+                    &action,
+                    "timeout",
+                    None,
+                    None,
+                );
+                action
             }
         }
     }
@@ -215,11 +306,13 @@ impl AgentRunner {
     /// 2. Serialize perception and render prompt
     /// 3. Call LLM with complexity-aware backend routing
     /// 4. Parse response into action
+    ///
+    /// Returns the action request and LLM metadata for the decision record.
     async fn decide_inner(
         &self,
         tick: u64,
         perception: &Perception,
-    ) -> Result<ActionRequest, RunnerError> {
+    ) -> Result<(ActionRequest, LlmDecisionMeta), RunnerError> {
         let agent_id = perception.self_state.id;
 
         // Step 1: Score complexity
@@ -239,12 +332,42 @@ impl AgentRunner {
         let prompt = self.prompt_engine.render(&perception_json)?;
 
         // Step 4: Call LLM with complexity-aware backend selection
-        let raw_response =
+        let start = Instant::now();
+        let (raw_response, backend_name) =
             self.call_with_routing(agent_id, complexity, &prompt)
                 .await?;
+        // LLM calls take at most a few seconds; millis will never exceed u64.
+        #[allow(clippy::cast_possible_truncation)]
+        let latency_ms = start.elapsed().as_millis() as u64;
 
-        // Step 5: Parse the response
+        // Step 5: Containment scan (Phase 5.4.2)
+        let containment_result = containment::scan_response(&raw_response);
+        if containment_result.threats_detected {
+            warn!(
+                agent_id = %agent_id,
+                tick = tick,
+                threat_count = containment_result.findings.len(),
+                "containment: threats detected in LLM response for agent"
+            );
+        }
+
+        // Step 6: Parse the response
         let decision = parse_llm_response(&raw_response);
+
+        // Step 7: Scan communication messages for exploitation (Phase 5.4.3)
+        if let ActionParameters::Communicate { ref message, .. }
+        | ActionParameters::Broadcast { ref message } = decision.parameters
+        {
+            let msg_scan = containment::scan_message(message);
+            if msg_scan.threats_detected {
+                warn!(
+                    agent_id = %agent_id,
+                    tick = tick,
+                    threat_count = msg_scan.findings.len(),
+                    "containment: threats detected in agent communication message"
+                );
+            }
+        }
 
         info!(
             agent_id = %agent_id,
@@ -252,16 +375,29 @@ impl AgentRunner {
             complexity = %complexity,
             action_type = ?decision.action_type,
             reasoning = ?decision.reasoning,
+            latency_ms = latency_ms,
             "decision parsed"
         );
 
-        Ok(ActionRequest {
-            agent_id,
-            tick,
-            action_type: decision.action_type,
-            parameters: decision.parameters,
-            submitted_at: Utc::now(),
-        })
+        let prompt_text = format!("{}\n\n{}", prompt.system, prompt.user);
+
+        let meta = LlmDecisionMeta {
+            prompt_sent: truncate_string(&prompt_text, MAX_PROMPT_LEN),
+            raw_response: truncate_string(&raw_response, MAX_RAW_RESPONSE_LEN),
+            backend_name,
+            latency_ms,
+        };
+
+        Ok((
+            ActionRequest {
+                agent_id,
+                tick,
+                action_type: decision.action_type,
+                parameters: decision.parameters,
+                submitted_at: Utc::now(),
+            },
+            meta,
+        ))
     }
 
     /// Call the LLM with complexity-aware backend routing and fallback.
@@ -277,12 +413,14 @@ impl AgentRunner {
     /// - All complexity levels: primary -> escalation -> error
     ///
     /// The fallback chain always tries both backends before giving up.
+    ///
+    /// Returns the raw response text and the name of the backend that responded.
     async fn call_with_routing(
         &self,
         agent_id: AgentId,
         complexity: ComplexityLevel,
         prompt: &crate::prompt::RenderedPrompt,
-    ) -> Result<String, RunnerError> {
+    ) -> Result<(String, String), RunnerError> {
         let use_escalation_first = self.complexity_routing_enabled
             && complexity == ComplexityLevel::High
             && self.escalation_backend.is_some();
@@ -297,20 +435,23 @@ impl AgentRunner {
     }
 
     /// Try primary backend first, then escalation backend as fallback.
+    ///
+    /// Returns the raw response text and the name of the backend that responded.
     async fn call_primary_then_escalation(
         &self,
         agent_id: AgentId,
         prompt: &crate::prompt::RenderedPrompt,
-    ) -> Result<String, RunnerError> {
+    ) -> Result<(String, String), RunnerError> {
         match self.primary_backend.complete(prompt).await {
             Ok(response) => {
+                let name = self.primary_backend.name().to_owned();
                 debug!(
                     agent_id = %agent_id,
-                    backend = self.primary_backend.name(),
+                    backend = name,
                     response_len = response.len(),
                     "primary backend responded"
                 );
-                Ok(response)
+                Ok((response, name))
             }
             Err(primary_err) => {
                 warn!(
@@ -325,21 +466,24 @@ impl AgentRunner {
     }
 
     /// Try escalation backend first, then primary backend as fallback.
+    ///
+    /// Returns the raw response text and the name of the backend that responded.
     async fn call_escalation_then_primary(
         &self,
         agent_id: AgentId,
         prompt: &crate::prompt::RenderedPrompt,
-    ) -> Result<String, RunnerError> {
+    ) -> Result<(String, String), RunnerError> {
         if let Some(escalation) = &self.escalation_backend {
             match escalation.complete(prompt).await {
                 Ok(response) => {
+                    let name = escalation.name().to_owned();
                     info!(
                         agent_id = %agent_id,
-                        backend = escalation.name(),
+                        backend = name,
                         response_len = response.len(),
                         "escalation backend responded (high complexity)"
                     );
-                    return Ok(response);
+                    return Ok((response, name));
                 }
                 Err(escalation_err) => {
                     warn!(
@@ -355,13 +499,14 @@ impl AgentRunner {
         // Fall back to primary
         match self.primary_backend.complete(prompt).await {
             Ok(response) => {
+                let name = self.primary_backend.name().to_owned();
                 debug!(
                     agent_id = %agent_id,
-                    backend = self.primary_backend.name(),
+                    backend = name,
                     response_len = response.len(),
                     "primary backend responded (escalation fallback)"
                 );
-                Ok(response)
+                Ok((response, name))
             }
             Err(primary_err) => {
                 warn!(
@@ -376,20 +521,23 @@ impl AgentRunner {
     }
 
     /// Try the escalation backend as a fallback (after primary failure).
+    ///
+    /// Returns the raw response text and the name of the backend that responded.
     async fn try_escalation_fallback(
         &self,
         agent_id: AgentId,
         prompt: &crate::prompt::RenderedPrompt,
-    ) -> Result<String, RunnerError> {
+    ) -> Result<(String, String), RunnerError> {
         if let Some(escalation) = &self.escalation_backend {
             match escalation.complete(prompt).await {
                 Ok(response) => {
+                    let name = escalation.name().to_owned();
                     info!(
                         agent_id = %agent_id,
-                        backend = escalation.name(),
+                        backend = name,
                         "escalation backend responded after primary failure"
                     );
-                    Ok(response)
+                    Ok((response, name))
                 }
                 Err(escalation_err) => {
                     warn!(
@@ -410,6 +558,72 @@ impl AgentRunner {
                 "primary failed and no escalation backend configured".to_owned(),
             ))
         }
+    }
+
+    /// Build and publish a [`DecisionRecord`] for an action using a typed
+    /// [`DecisionSource`].
+    fn publish_decision_record(
+        &self,
+        action: &ActionRequest,
+        source: DecisionSource,
+        llm_meta: Option<&LlmDecisionMeta>,
+        rule_matched: Option<&str>,
+    ) {
+        self.publish_decision_record_with_source(
+            action,
+            source.as_str(),
+            llm_meta,
+            rule_matched,
+        );
+    }
+
+    /// Build and publish a [`DecisionRecord`] for an action using a raw
+    /// decision source string (used for `"timeout"` which has no
+    /// [`DecisionSource`] variant).
+    fn publish_decision_record_with_source(
+        &self,
+        action: &ActionRequest,
+        source: &str,
+        llm_meta: Option<&LlmDecisionMeta>,
+        rule_matched: Option<&str>,
+    ) {
+        let action_params = serde_json::to_value(&action.parameters).unwrap_or_default();
+
+        let record = DecisionRecord {
+            agent_id: action.agent_id,
+            tick: action.tick,
+            decision_source: source.to_owned(),
+            action_type: format!("{:?}", action.action_type),
+            action_params,
+            llm_backend: llm_meta.map(|m| m.backend_name.clone()),
+            model: None, // Model ID is not directly available from the backend
+            prompt_tokens: None,
+            completion_tokens: None,
+            cost_usd: None,
+            latency_ms: llm_meta.map(|m| m.latency_ms),
+            raw_llm_response: llm_meta.map(|m| m.raw_response.clone()),
+            prompt_sent: llm_meta.map(|m| m.prompt_sent.clone()),
+            rule_matched: rule_matched.map(ToOwned::to_owned),
+            created_at: Utc::now(),
+        };
+
+        self.nats.publish_decision(&record);
+    }
+}
+
+/// Truncate a string to at most `max_len` bytes on a valid UTF-8 boundary.
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_owned()
+    } else {
+        // Find the last valid char boundary at or before max_len.
+        let mut end = max_len;
+        while end > 0 && !s.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        let mut truncated = s[..end].to_owned();
+        truncated.push_str("...");
+        truncated
     }
 }
 
@@ -442,6 +656,7 @@ mod tests {
                 "energy": 80,
                 "health": 100,
                 "hunger": 10,
+                "thirst": 0,
                 "location_name": "Forest",
                 "inventory": {},
                 "carry_load": "0/50",
@@ -468,10 +683,12 @@ mod tests {
                 self_state: emergence_types::SelfState {
                     id: emergence_types::AgentId::new(),
                     name: "TestAgent".to_owned(),
+                    sex: emergence_types::Sex::Male,
                     age: 5,
                     energy: 80,
                     health: 100,
                     hunger: 10,
+                    thirst: 0,
                     location_name: "Forest".to_owned(),
                     inventory: std::collections::BTreeMap::new(),
                     carry_load: "0/50".to_owned(),
@@ -627,6 +844,7 @@ mod tests {
         perception.surroundings.agents_here = vec![
             emergence_types::VisibleAgent {
                 name: "Neighbor".to_owned(),
+                sex: emergence_types::Sex::Male,
                 relationship: "friendly (0.5)".to_owned(),
                 activity: "idle".to_owned(),
             },

@@ -90,13 +90,19 @@ pub struct SimulationConfig {
 impl SimulationConfig {
     /// Load configuration from a YAML file at the given path.
     ///
+    /// Environment variables override YAML values for infrastructure URLs:
+    /// - `NATS_URL` overrides `infrastructure.nats_url`
+    /// - `DATABASE_URL` overrides `infrastructure.postgres_url`
+    /// - `DRAGONFLY_URL` overrides `infrastructure.dragonfly_url`
+    ///
     /// # Errors
     ///
     /// Returns [`ConfigError::Io`] if the file cannot be read, or
     /// [`ConfigError::Yaml`] if the content is not valid YAML.
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         let contents = std::fs::read_to_string(path)?;
-        let config: Self = serde_yml::from_str(&contents)?;
+        let mut config: Self = serde_yml::from_str(&contents)?;
+        config.infrastructure.apply_env_overrides();
         Ok(config)
     }
 
@@ -106,7 +112,8 @@ impl SimulationConfig {
     ///
     /// Returns [`ConfigError::Yaml`] if the string is not valid YAML.
     pub fn parse(yaml: &str) -> Result<Self, ConfigError> {
-        let config: Self = serde_yml::from_str(yaml)?;
+        let mut config: Self = serde_yml::from_str(yaml)?;
+        config.infrastructure.apply_env_overrides();
         Ok(config)
     }
 }
@@ -329,6 +336,24 @@ pub struct InfrastructureConfig {
     pub observer_port: u16,
 }
 
+impl InfrastructureConfig {
+    /// Override infrastructure URLs with environment variables when set.
+    ///
+    /// This allows Docker Compose (or any deployment) to set connection
+    /// strings via env vars without modifying the YAML config file.
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("NATS_URL") {
+            self.nats_url = val;
+        }
+        if let Ok(val) = std::env::var("DATABASE_URL") {
+            self.postgres_url = val;
+        }
+        if let Ok(val) = std::env::var("DRAGONFLY_URL") {
+            self.dragonfly_url = val;
+        }
+    }
+}
+
 impl Default for InfrastructureConfig {
     fn default() -> Self {
         Self {
@@ -414,6 +439,14 @@ pub struct SimulationBoundsConfig {
     /// End condition type: `time_limit`, `extinction`, `era_reached`, `manual`.
     #[serde(default = "default_end_condition")]
     pub end_condition: String,
+
+    /// Minimum number of living agents before auto-spawning kicks in.
+    ///
+    /// If the population drops below this value after a tick completes,
+    /// the engine will automatically queue spawn requests to reach this
+    /// floor. Set to 0 to disable auto-recovery.
+    #[serde(default = "default_min_population")]
+    pub min_population: u32,
 }
 
 impl Default for SimulationBoundsConfig {
@@ -422,6 +455,7 @@ impl Default for SimulationBoundsConfig {
             max_ticks: 0,
             max_real_time_seconds: default_max_real_time_seconds(),
             end_condition: default_end_condition(),
+            min_population: default_min_population(),
         }
     }
 }
@@ -448,6 +482,117 @@ impl Default for OperatorConfig {
             api_auth_token: String::new(),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Experiment Framework Configuration (Phase 5.2)
+// ---------------------------------------------------------------------------
+
+/// Experiment configuration for A/B testing and reproducible experiments.
+///
+/// An experiment encapsulates a bounded simulation run with explicit
+/// parameter overrides. Two experiments with different personality
+/// distributions but the same seed and world config can be compared
+/// post-hoc.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+pub struct ExperimentConfig {
+    /// Unique experiment identifier (generated at creation time).
+    #[serde(default = "default_experiment_id")]
+    pub experiment_id: String,
+
+    /// Human-readable experiment name.
+    #[serde(default)]
+    pub name: String,
+
+    /// Longer description of the experiment's purpose or hypothesis.
+    #[serde(default)]
+    pub description: String,
+
+    /// Number of agents to spawn at experiment start.
+    ///
+    /// Overrides `population.initial_agents` when set.
+    #[serde(default)]
+    pub agent_count: Option<u32>,
+
+    /// Personality distribution mode: `"random"`, `"cooperative"`,
+    /// `"aggressive"`, `"balanced"`, `"custom"`.
+    ///
+    /// Determines how personality vectors are generated for seed agents.
+    #[serde(default = "default_personality_distribution")]
+    pub personality_distribution: String,
+
+    /// World seed override for reproducibility.
+    ///
+    /// When set, overrides `world.seed` from the base config.
+    #[serde(default)]
+    pub world_seed: Option<u64>,
+
+    /// Maximum ticks for this experiment (0 = use base config).
+    #[serde(default)]
+    pub max_ticks: u64,
+
+    /// Arbitrary parameter overrides as key-value pairs.
+    ///
+    /// Keys follow dot-notation paths into the config tree,
+    /// e.g. `"economy.hunger_rate"` = `"3"`.
+    #[serde(default)]
+    pub parameter_overrides: BTreeMap<String, String>,
+}
+
+impl Default for ExperimentConfig {
+    fn default() -> Self {
+        Self {
+            experiment_id: default_experiment_id(),
+            name: String::new(),
+            description: String::new(),
+            agent_count: None,
+            personality_distribution: default_personality_distribution(),
+            world_seed: None,
+            max_ticks: 0,
+            parameter_overrides: BTreeMap::new(),
+        }
+    }
+}
+
+impl ExperimentConfig {
+    /// Create a new experiment config with a fresh ID and the given name.
+    pub fn new(name: &str) -> Self {
+        Self {
+            experiment_id: default_experiment_id(),
+            name: name.to_owned(),
+            ..Self::default()
+        }
+    }
+
+    /// Load experiment config from a YAML file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Io`] if the file cannot be read, or
+    /// [`ConfigError::Yaml`] if the content is not valid YAML.
+    pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
+        let contents = std::fs::read_to_string(path)?;
+        let config: Self = serde_yml::from_str(&contents)?;
+        Ok(config)
+    }
+
+    /// Parse experiment config from a YAML string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Yaml`] if the string is not valid YAML.
+    pub fn parse(yaml: &str) -> Result<Self, ConfigError> {
+        let config: Self = serde_yml::from_str(yaml)?;
+        Ok(config)
+    }
+}
+
+fn default_experiment_id() -> String {
+    uuid::Uuid::now_v7().to_string()
+}
+
+fn default_personality_distribution() -> String {
+    "random".to_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +738,10 @@ const fn default_max_real_time_seconds() -> u64 {
 
 fn default_end_condition() -> String {
     "time_limit".to_owned()
+}
+
+const fn default_min_population() -> u32 {
+    2
 }
 
 const fn default_true() -> bool {

@@ -383,6 +383,76 @@ impl DragonflyPool {
         Ok(())
     }
 
+    // =========================================================================
+    // Batch Operations -- MGET/MSET for reduced round-trips
+    // =========================================================================
+
+    /// Batch-set multiple JSON values in a single MSET command.
+    ///
+    /// Each `(key, value)` pair is serialized to JSON and written in one
+    /// round-trip. This is significantly faster than individual SET calls
+    /// when persisting many agent states at end of tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Serialization`] if any value fails to serialize.
+    /// Returns [`DbError::Dragonfly`] if the MSET command fails.
+    pub async fn mset_json<T: Serialize>(
+        &self,
+        entries: &[(&str, &T)],
+    ) -> Result<(), DbError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let mut pairs: Vec<(String, String)> = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            let json = serde_json::to_string(value)?;
+            pairs.push(((*key).to_owned(), json));
+        }
+
+        // fred's MSET accepts a map or Vec of pairs.
+        let kv_pairs: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let _: () = self.client.mset(kv_pairs).await?;
+
+        Ok(())
+    }
+
+    /// Batch-get multiple JSON values in a single MGET command.
+    ///
+    /// Returns a vector of `Option<T>` in the same order as the input keys.
+    /// Keys that do not exist return `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Serialization`] if any value fails to deserialize.
+    /// Returns [`DbError::Dragonfly`] if the MGET command fails.
+    pub async fn mget_json<T: DeserializeOwned>(
+        &self,
+        keys: &[String],
+    ) -> Result<Vec<Option<T>>, DbError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let values: Vec<Option<String>> = self.client.mget(keys.to_vec()).await?;
+        let mut results = Vec::with_capacity(values.len());
+        for v in &values {
+            match v {
+                Some(s) => {
+                    let parsed: T = serde_json::from_str(s)?;
+                    results.push(Some(parsed));
+                }
+                None => results.push(None),
+            }
+        }
+        Ok(results)
+    }
+
     /// Return a reference to the underlying [`Client`].
     pub const fn client(&self) -> &Client {
         &self.client

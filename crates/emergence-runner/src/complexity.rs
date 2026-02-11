@@ -253,7 +253,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use emergence_types::{
-        Perception, Season, SelfState, Surroundings, TimeOfDay, VisibleAgent, Weather,
+        Perception, Season, SelfState, Sex, Surroundings, TimeOfDay, VisibleAgent, Weather,
     };
 
     use super::*;
@@ -269,10 +269,12 @@ mod tests {
             self_state: SelfState {
                 id: emergence_types::AgentId::new(),
                 name: "Loner".to_owned(),
+                sex: Sex::Male,
                 age: 5,
                 energy: 80,
                 health: 100,
                 hunger: 10,
+                thirst: 0,
                 location_name: "Forest".to_owned(),
                 inventory: BTreeMap::new(),
                 carry_load: "0/50".to_owned(),
@@ -309,6 +311,7 @@ mod tests {
         perception.surroundings.agents_here = vec![
             VisibleAgent {
                 name: "Neighbor".to_owned(),
+                sex: Sex::Male,
                 relationship: "neutral (0.0)".to_owned(),
                 activity: "resting".to_owned(),
             },
@@ -326,6 +329,7 @@ mod tests {
         perception.surroundings.agents_here = vec![
             VisibleAgent {
                 name: "Friend".to_owned(),
+                sex: Sex::Female,
                 relationship: "friendly (0.6)".to_owned(),
                 activity: "gathering".to_owned(),
             },
@@ -345,6 +349,7 @@ mod tests {
         perception.surroundings.agents_here = vec![
             VisibleAgent {
                 name: "Trader".to_owned(),
+                sex: Sex::Male,
                 relationship: "neutral (0.0)".to_owned(),
                 activity: "idle".to_owned(),
             },
@@ -370,11 +375,13 @@ mod tests {
         perception.surroundings.agents_here = vec![
             VisibleAgent {
                 name: "Leader".to_owned(),
+                sex: Sex::Male,
                 relationship: "friendly (0.8)".to_owned(),
                 activity: "legislating".to_owned(),
             },
             VisibleAgent {
                 name: "Follower".to_owned(),
+                sex: Sex::Female,
                 relationship: "neutral (0.3)".to_owned(),
                 activity: "idle".to_owned(),
             },
@@ -419,16 +426,19 @@ mod tests {
         perception.surroundings.agents_here = vec![
             VisibleAgent {
                 name: "A".to_owned(),
+                sex: Sex::Male,
                 relationship: "hostile (-0.5)".to_owned(),
                 activity: "fighting".to_owned(),
             },
             VisibleAgent {
                 name: "B".to_owned(),
+                sex: Sex::Female,
                 relationship: "friendly (0.7)".to_owned(),
                 activity: "gathering".to_owned(),
             },
             VisibleAgent {
                 name: "C".to_owned(),
+                sex: Sex::Male,
                 relationship: "neutral (0.0)".to_owned(),
                 activity: "idle".to_owned(),
             },
@@ -467,11 +477,11 @@ mod tests {
         let mut perception = solo_survival_perception();
         // 5 agents should still only contribute 3 points (capped).
         perception.surroundings.agents_here = vec![
-            VisibleAgent { name: "A".to_owned(), relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "B".to_owned(), relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "C".to_owned(), relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "D".to_owned(), relationship: "n".to_owned(), activity: "i".to_owned() },
-            VisibleAgent { name: "E".to_owned(), relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { name: "A".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { name: "B".to_owned(), sex: Sex::Female, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { name: "C".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { name: "D".to_owned(), sex: Sex::Female, relationship: "n".to_owned(), activity: "i".to_owned() },
+            VisibleAgent { name: "E".to_owned(), sex: Sex::Male, relationship: "n".to_owned(), activity: "i".to_owned() },
         ];
 
         let raw = compute_raw_score(&perception);

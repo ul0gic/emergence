@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
-use emergence_types::{Agent, AgentId, AgentState, LocationId, Personality, Resource};
+use emergence_types::{Agent, AgentId, AgentState, LocationId, Personality, Resource, Sex};
 
 use crate::config::VitalsConfig;
 use crate::error::AgentError;
@@ -25,6 +25,8 @@ use crate::error::AgentError;
 pub struct ChildAgentParams {
     /// Display name for the child (must be unique).
     pub name: String,
+    /// Biological sex of the child (randomly assigned by caller).
+    pub sex: Sex,
     /// Blended personality (caller is responsible for blending + mutation).
     pub personality: Personality,
     /// ID of the first parent.
@@ -67,9 +69,11 @@ impl AgentManager {
     /// # Errors
     ///
     /// Returns [`AgentError::DuplicateName`] if the name is already taken.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_seed_agent(
         &mut self,
         name: String,
+        sex: Sex,
         personality: Personality,
         location: LocationId,
         born_at_tick: u64,
@@ -86,6 +90,7 @@ impl AgentManager {
         let agent = Agent {
             id,
             name,
+            sex,
             born_at_tick,
             died_at_tick: None,
             cause_of_death: None,
@@ -101,6 +106,7 @@ impl AgentManager {
             energy: config.starting_energy,
             health: config.starting_health,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick,
             location_id: location,
@@ -152,6 +158,7 @@ impl AgentManager {
         let agent = Agent {
             id,
             name: params.name.clone(),
+            sex: params.sex,
             born_at_tick: params.born_at_tick,
             died_at_tick: None,
             cause_of_death: None,
@@ -167,6 +174,7 @@ impl AgentManager {
             energy: config.starting_energy,
             health: config.starting_health,
             hunger: 0,
+            thirst: 0,
             age: 0,
             born_at_tick: params.born_at_tick,
             location_id: params.location,
@@ -231,6 +239,7 @@ mod tests {
 
         let result = manager.create_seed_agent(
             String::from("Kora"),
+            Sex::Female,
             test_personality(),
             location,
             0,
@@ -265,6 +274,7 @@ mod tests {
 
         let result = manager.create_seed_agent(
             String::from("Dax"),
+            Sex::Male,
             test_personality(),
             LocationId::new(),
             0,
@@ -286,6 +296,7 @@ mod tests {
 
         let r1 = manager.create_seed_agent(
             String::from("Kora"),
+            Sex::Female,
             test_personality(),
             LocationId::new(),
             0,
@@ -296,6 +307,7 @@ mod tests {
 
         let r2 = manager.create_seed_agent(
             String::from("Kora"),
+            Sex::Male,
             test_personality(),
             LocationId::new(),
             0,
@@ -315,6 +327,7 @@ mod tests {
 
         let params = ChildAgentParams {
             name: String::from("Junior"),
+            sex: Sex::Male,
             personality: test_personality(),
             first_parent: pa,
             second_parent: pb,
@@ -345,6 +358,7 @@ mod tests {
 
         let params = ChildAgentParams {
             name: String::from("Gen3"),
+            sex: Sex::Female,
             personality: test_personality(),
             first_parent: AgentId::new(),
             second_parent: AgentId::new(),
@@ -369,6 +383,7 @@ mod tests {
 
         let _ = manager.create_seed_agent(
             String::from("Kora"),
+            Sex::Female,
             test_personality(),
             LocationId::new(),
             0,
@@ -383,6 +398,7 @@ mod tests {
         // Can now create another agent with the same name
         let r = manager.create_seed_agent(
             String::from("Kora"),
+            Sex::Female,
             test_personality(),
             LocationId::new(),
             100,
@@ -405,6 +421,7 @@ mod tests {
 
         let r1 = manager.create_seed_agent(
             String::from("A"),
+            Sex::Female,
             test_personality(),
             LocationId::new(),
             0,
@@ -413,6 +430,7 @@ mod tests {
         );
         let r2 = manager.create_seed_agent(
             String::from("B"),
+            Sex::Male,
             test_personality(),
             LocationId::new(),
             0,

@@ -75,7 +75,9 @@ pub use trade::{
     trade_accept, trade_offer, trade_reject, validate_trade_offer_location,
     validate_trade_offer_resources,
 };
-pub use memory::{MemoryConfig, MemoryStore};
+pub use memory::{
+    CompressionRecord, MemoryConfig, MemoryStore, find_reflection_triggers, importance_score,
+};
 pub use skills::{
     MAX_SKILL_LEVEL, SKILL_NAMES, SkillSystem, XP_BUILD, XP_CRAFT, XP_FARM_HARVEST,
     XP_FARM_PLANT, XP_GATHER, XP_MINE, XP_MOVE, XP_SMELT, XP_TEACH, XP_TRADE,

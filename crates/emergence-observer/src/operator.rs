@@ -35,6 +35,22 @@ pub struct SetSpeedRequest {
     pub tick_interval_ms: u64,
 }
 
+/// Request body for `POST /api/operator/spawn-agent`.
+#[derive(Debug, serde::Deserialize)]
+pub struct SpawnAgentRequest {
+    /// Optional display name for the agent.
+    pub name: Option<String>,
+    /// Optional starting location (UUID string).
+    pub location_id: Option<emergence_types::LocationId>,
+    /// Personality generation mode (default: `"random"`).
+    #[serde(default = "default_personality_mode")]
+    pub personality_mode: String,
+}
+
+fn default_personality_mode() -> String {
+    String::from("random")
+}
+
 /// Request body for `POST /api/operator/inject-event`.
 #[derive(Debug, serde::Deserialize)]
 pub struct InjectEventRequest {
@@ -241,4 +257,60 @@ pub async fn stop(
         ok: true,
         message: "Stop requested -- simulation will end after current tick".to_owned(),
     }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/operator/restart
+// ---------------------------------------------------------------------------
+
+/// Request a simulation restart.
+///
+/// Sets a restart flag on the operator state that the engine checks.
+/// The engine will cleanly stop the current simulation and the
+/// orchestrator is expected to re-initialize and restart.
+pub async fn restart(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, ObserverError> {
+    let operator = state
+        .operator_state
+        .as_ref()
+        .ok_or_else(|| ObserverError::Internal("operator state not available".to_owned()))?;
+
+    operator.request_restart();
+
+    Ok(Json(serde_json::json!({
+        "status": "restarting",
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/operator/spawn-agent
+// ---------------------------------------------------------------------------
+
+/// Queue an agent spawn request for the next tick.
+///
+/// The agent will be created during the pre-tick spawn processing phase
+/// and will participate in the simulation starting from the following
+/// perception cycle.
+pub async fn spawn_agent(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SpawnAgentRequest>,
+) -> Result<impl IntoResponse, ObserverError> {
+    let operator = state
+        .operator_state
+        .as_ref()
+        .ok_or_else(|| ObserverError::Internal("operator state not available".to_owned()))?;
+
+    let request = emergence_core::operator::SpawnRequest {
+        name: body.name,
+        location_id: body.location_id,
+        personality_mode: body.personality_mode,
+    };
+
+    operator.queue_agent_spawn(request).await;
+
+    Ok(Json(serde_json::json!({
+        "status": "queued",
+        "message": "Agent spawn queued for next tick",
+    })))
 }

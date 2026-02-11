@@ -10,6 +10,8 @@
 //! - [`config`] -- Configuration loading from `emergence-config.yaml` into
 //!   strongly-typed structs.
 //! - [`decision`] -- [`DecisionSource`] trait and [`StubDecisionSource`].
+//! - [`experiment`] -- Experiment framework for A/B testing, snapshot
+//!   capture, and reproducible simulations.
 //! - [`fuzzy`] -- Fuzzy resource quantity representation for perception.
 //! - [`operator`] -- Shared operator control state for pause, resume,
 //!   speed adjustment, event injection, and clean shutdown.
@@ -24,6 +26,7 @@
 pub mod clock;
 pub mod config;
 pub mod decision;
+pub mod experiment;
 pub mod feasibility;
 pub mod fuzzy;
 pub mod operator;

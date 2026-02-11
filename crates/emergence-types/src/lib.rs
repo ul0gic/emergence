@@ -33,15 +33,16 @@ pub use perception::{KnownRoute, Perception, SelfState, Surroundings, VisibleAge
 pub use structs::{
     AccessControlList, ActionRejectedDetails, ActionSucceededDetails, Agent, AgentDiedDetails,
     AgentState, AgentStateSnapshot, CombatInitiatedDetails, CombatIntent, CombatResolvedDetails,
-    EconomyStats, EnforcementAppliedDetails, Event, Group, GroupFormedDetails, InteractionCause,
-    KnowledgeDiscoveredDetails, KnowledgeTaughtDetails, LedgerEntry, Location, LocationEffects,
-    MemoryEntry, Message, PendingTrade, Personality, PopulationStats, RejectionDetails,
-    RelationshipChangedDetails, ResourceGatheredDetails, ResourceNode, Route, RouteDegradedDetails,
-    RouteImprovedDetails, Rule, RuleCreatedDetails, Structure, StructureBlueprint,
-    StructureBuiltDetails, StructureClaimedDetails, StructureDestroyedDetails,
-    StructureProperties, StructureRepairedDetails, TheftFailedDetails, TheftFailureReason,
-    TheftOccurredDetails, TradeCompletedDetails, TradeFailReason, TradeFailedDetails,
-    VisibleMessage, VisibleStructure, WorldContext, WorldSnapshot, memory_types,
+    DecisionRecord, EconomyStats, EnforcementAppliedDetails, Event, Group, GroupFormedDetails,
+    InteractionCause, KnowledgeDiscoveredDetails, KnowledgeTaughtDetails, LedgerEntry, Location,
+    LocationEffects, MemoryEntry, Message, PendingTrade, Personality, PopulationStats,
+    RejectionDetails, RelationshipChangedDetails, ResourceGatheredDetails, ResourceNode, Route,
+    RouteDegradedDetails, RouteImprovedDetails, Rule, RuleCreatedDetails, Sex, Structure,
+    StructureBlueprint, StructureBuiltDetails, StructureClaimedDetails,
+    StructureDestroyedDetails, StructureProperties, StructureRepairedDetails, TheftFailedDetails,
+    TheftFailureReason, TheftOccurredDetails, TradeCompletedDetails, TradeFailReason,
+    TradeFailedDetails, VisibleMessage, VisibleStructure, WorldContext, WorldSnapshot,
+    memory_types,
 };
 
 #[cfg(test)]
@@ -136,6 +137,8 @@ mod tests {
         let _ = crate::structs::CombatIntent::export_all();
         let _ = crate::structs::CombatInitiatedDetails::export_all();
         let _ = crate::structs::CombatResolvedDetails::export_all();
+        let _ = crate::structs::DecisionRecord::export_all();
+        let _ = crate::structs::Sex::export_all();
 
         // Actions
         let _ = crate::actions::ActionParameters::export_all();

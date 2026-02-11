@@ -341,6 +341,53 @@ pub struct AgentStateSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// 9.3.1 DecisionRecord
+// ---------------------------------------------------------------------------
+
+/// Record of a single agent decision, published by the runner after each tick.
+///
+/// Captures the full context of a decision: which agent, what action was chosen,
+/// how it was decided (LLM, rule engine, night cycle, timeout), and diagnostics
+/// including the prompt, raw response, token usage, cost, and latency.
+///
+/// Published to NATS by the runner and collected by the engine for the Observer
+/// REST API.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct DecisionRecord {
+    /// The agent who made this decision.
+    pub agent_id: AgentId,
+    /// The tick this decision was for.
+    pub tick: u64,
+    /// How the decision was made: `"llm"`, `"rule_engine"`, `"night_cycle"`, `"timeout"`.
+    pub decision_source: String,
+    /// The action type chosen.
+    pub action_type: String,
+    /// The action parameters as JSON.
+    pub action_params: serde_json::Value,
+    /// LLM backend used (if LLM decision).
+    pub llm_backend: Option<String>,
+    /// Model ID used (if LLM decision).
+    pub model: Option<String>,
+    /// Input/prompt tokens (if LLM decision).
+    pub prompt_tokens: Option<u32>,
+    /// Output/completion tokens (if LLM decision).
+    pub completion_tokens: Option<u32>,
+    /// Estimated cost in USD (if LLM decision).
+    pub cost_usd: Option<f64>,
+    /// LLM response latency in milliseconds (if LLM decision).
+    pub latency_ms: Option<u64>,
+    /// The raw LLM response text (if LLM decision). Truncated to 4000 chars.
+    pub raw_llm_response: Option<String>,
+    /// The assembled prompt sent to the LLM (if LLM decision). Truncated to 8000 chars.
+    pub prompt_sent: Option<String>,
+    /// Which rule matched (if rule\_engine decision).
+    pub rule_matched: Option<String>,
+    /// Timestamp of the decision.
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // 5.1 Base Event
 // ---------------------------------------------------------------------------
 
@@ -410,6 +457,33 @@ pub struct LedgerEntry {
 }
 
 // ---------------------------------------------------------------------------
+// 4.0 Sex
+// ---------------------------------------------------------------------------
+
+/// Biological sex of an agent, used for sexual reproduction requirements.
+///
+/// Every agent is assigned a sex at creation (randomly for seed agents,
+/// randomly for children). Reproduction requires one `Male` and one `Female`
+/// partner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub enum Sex {
+    /// Male agent.
+    Male,
+    /// Female agent.
+    Female,
+}
+
+impl std::fmt::Display for Sex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Male => f.write_str("Male"),
+            Self::Female => f.write_str("Female"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 4.1 Agent (identity)
 // ---------------------------------------------------------------------------
 
@@ -421,6 +495,8 @@ pub struct Agent {
     pub id: AgentId,
     /// Display name, unique within the simulation.
     pub name: String,
+    /// Biological sex (Male or Female).
+    pub sex: Sex,
     /// Tick when the agent entered the simulation.
     pub born_at_tick: u64,
     /// Tick when the agent died (`None` if alive).
@@ -455,6 +531,8 @@ pub struct AgentState {
     pub health: u32,
     /// Current hunger level (0--100).
     pub hunger: u32,
+    /// Current thirst level (0--100).
+    pub thirst: u32,
     /// Current age in ticks.
     pub age: u32,
     /// The tick when the agent entered the simulation.

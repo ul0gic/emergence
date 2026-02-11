@@ -31,6 +31,7 @@ async fn make_test_state() -> Arc<AppState> {
     let agent = Agent {
         id: agent_id,
         name: String::from("TestAgent"),
+        sex: emergence_types::Sex::Male,
         born_at_tick: 0,
         died_at_tick: None,
         cause_of_death: None,
@@ -55,6 +56,7 @@ async fn make_test_state() -> Arc<AppState> {
         energy: 80,
         health: 100,
         hunger: 10,
+        thirst: 0,
         age: 5,
         born_at_tick: 0,
         location_id,

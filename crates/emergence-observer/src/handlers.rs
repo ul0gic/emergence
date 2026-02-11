@@ -340,6 +340,28 @@ pub async fn get_location(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/routes -- list routes
+// ---------------------------------------------------------------------------
+
+/// List all routes in the simulation with full metadata.
+pub async fn list_routes(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, ObserverError> {
+    let snapshot = state.snapshot.read().await;
+
+    let routes: Vec<serde_json::Value> = snapshot
+        .routes
+        .values()
+        .map(|route| serde_json::to_value(route).unwrap_or_default())
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "count": routes.len(),
+        "routes": routes,
+    })))
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/events -- query events
 // ---------------------------------------------------------------------------
 
@@ -387,6 +409,72 @@ pub async fn list_events(
     Ok(Json(serde_json::json!({
         "count": events.len(),
         "events": events,
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/decisions -- query decision records
+// ---------------------------------------------------------------------------
+
+/// Query parameters for the `GET /api/decisions` endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct DecisionsQuery {
+    /// Filter by tick number.
+    pub tick: Option<u64>,
+    /// Filter by agent ID (UUID string).
+    pub agent_id: Option<String>,
+    /// Maximum number of records to return (default 100, max 1000).
+    pub limit: Option<usize>,
+}
+
+/// Query recent agent decision records.
+///
+/// Returns decision metadata including the decision source (LLM, rule engine,
+/// night cycle, timeout), action chosen, prompt, raw LLM response, token
+/// usage, cost, and latency.
+///
+/// # Query Parameters
+///
+/// - `tick`: Return decisions for a specific tick.
+/// - `agent_id`: Return decisions for a specific agent (UUID).
+/// - `limit`: Maximum number of records to return (default 100, max 1000).
+pub async fn list_decisions(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<DecisionsQuery>,
+) -> Result<impl IntoResponse, ObserverError> {
+    let snapshot = state.snapshot.read().await;
+    let limit = params.limit.unwrap_or(100).min(1000);
+
+    let agent_filter = params
+        .agent_id
+        .as_deref()
+        .map(parse_uuid)
+        .transpose()?
+        .map(emergence_types::AgentId::from);
+
+    let decisions: Vec<&emergence_types::DecisionRecord> = snapshot
+        .decisions
+        .iter()
+        .rev()
+        .filter(|d| {
+            if let Some(tick) = params.tick
+                && d.tick != tick
+            {
+                return false;
+            }
+            if let Some(ref agent_id) = agent_filter
+                && &d.agent_id != agent_id
+            {
+                return false;
+            }
+            true
+        })
+        .take(limit)
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "count": decisions.len(),
+        "decisions": decisions,
     })))
 }
 

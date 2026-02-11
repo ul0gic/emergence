@@ -179,9 +179,12 @@ export interface Personality {
   loyalty: string;
 }
 
+export type Sex = "Male" | "Female";
+
 export interface Agent {
   id: AgentId;
   name: string;
+  sex: Sex;
   born_at_tick: number;
   died_at_tick: number | null;
   cause_of_death: string | null;
@@ -206,6 +209,7 @@ export interface AgentState {
   energy: number;
   health: number;
   hunger: number;
+  thirst: number;
   age: number;
   born_at_tick: number;
   location_id: LocationId;
@@ -412,8 +416,10 @@ export interface TickBroadcast {
 export interface AgentListItem {
   id: AgentId;
   name: string;
+  sex?: Sex;
   born_at_tick: number;
   died_at_tick: number | null;
+  cause_of_death?: string | null;
   generation: number;
   alive: boolean;
   vitals: {
@@ -451,6 +457,11 @@ export interface LocationsResponse {
 export interface LocationDetailResponse {
   location: Location;
   agents_here: { id: AgentId; name: string }[];
+}
+
+export interface RoutesResponse {
+  count: number;
+  routes: Route[];
 }
 
 export interface EventsResponse {
@@ -639,4 +650,69 @@ export interface CrimeStats {
   common_crimes: CrimeEntry[];
   serial_offenders: SerialOffender[];
   hotspots: CrimeHotspot[];
+}
+
+// ---------------------------------------------------------------------------
+// Social API response wrappers (match backend JSON shapes)
+// ---------------------------------------------------------------------------
+
+export interface BeliefsResponse {
+  belief_systems: BeliefSystem[];
+  belief_events: BeliefEvent[];
+}
+
+export interface SocialEconomyResponse {
+  model_type: EconomicModelType;
+  currency_resource: Resource | null;
+  currency_adoption_pct: number;
+  trade_volume: number;
+  trade_volume_history: { tick: number; volume: number }[];
+  market_locations: MarketLocation[];
+}
+
+// ---------------------------------------------------------------------------
+// Civilization timeline event (cross-construct emergence tracking)
+// ---------------------------------------------------------------------------
+
+export type CivilizationMilestoneCategory =
+  | "belief"
+  | "governance"
+  | "family"
+  | "economy"
+  | "crime";
+
+export interface CivilizationMilestone {
+  tick: number;
+  category: CivilizationMilestoneCategory;
+  label: string;
+  description: string;
+}
+
+// ---------------------------------------------------------------------------
+// Decision record types (Phase 9.3 — LLM Decision Viewer)
+// ---------------------------------------------------------------------------
+
+export type DecisionSource = "llm" | "rule_engine" | "night_cycle" | "timeout";
+
+export interface DecisionRecord {
+  agent_id: AgentId;
+  tick: number;
+  decision_source: DecisionSource;
+  action_type: string;
+  action_params: Record<string, unknown> | null;
+  llm_backend: string | null;
+  model: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cost_usd: number | null;
+  latency_ms: number | null;
+  raw_llm_response: string | null;
+  prompt_sent: string | null;
+  rule_matched: string | null;
+  created_at: string;
+}
+
+export interface DecisionsResponse {
+  count: number;
+  decisions: DecisionRecord[];
 }

@@ -382,6 +382,8 @@ pub enum RejectionReason {
     Infeasible,
     /// A freeform action is too ambiguous for rule-based evaluation.
     NeedsEvaluation,
+    /// Reproduction requires one male and one female partner.
+    SameSexReproduction,
 }
 
 // ---------------------------------------------------------------------------
